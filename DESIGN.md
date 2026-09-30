@@ -48,6 +48,7 @@ snoot scan [PATH]            Scan a source tree (default: .)
   --output FILE              Write report to file instead of stdout
   --fail-on SEVERITY          Exit non-zero if findings at/above severity (CI gating)
   --baseline FILE            Suppress findings already recorded in baseline
+  --exclude GLOB             Skip files matching glob (repeatable, comma-separated)
   --no-color                 Disable colored output
   --quiet                    Findings only, no banner/summary
 
@@ -135,7 +136,13 @@ v1 target: **20+ rules** across the six languages.
 
 ## 7. Language coverage (v1)
 
-Rust, Python, Go, JavaScript/TypeScript, Java, C/C++ — via tree-sitter grammars.
+Week-2 status: tree-sitter grammars wired for **Rust, Python, Go,
+JavaScript, TypeScript (parsed with the JavaScript grammar), and Java**.
+The code engine compiles every registry query once at startup and runs it
+against each scanned file of a matching language. C/C++ grammars are vendored
+in `Cargo.toml` (commented out) and wire up when the first C/C++ queries
+land — the rules-as-data design makes that a data-only change.
+
 Each language gets: key-generation calls, sign/verify, encrypt/decrypt, key
 exchange / TLS setup, and key import/parse calls. C/C++ covers OpenSSL,
 mbedTLS, and libsodium call shapes.
@@ -186,8 +193,9 @@ This is the differentiator against the toy scanners. v1 ships with:
 ## 11. Distribution
 
 - `cargo install snoot` (crates.io)
-- GitHub Action (`chasebryan/snoot-action` or in-repo `action.yml`) that runs
-  scan + uploads SARIF to code scanning
+- GitHub Action (`action.yml` in-repo, composite: `cargo install --git` +
+  SARIF upload to code scanning; switches to prebuilt-binary download with
+  the release workflow)
 - Prebuilt binaries via release workflow (linux/mac/windows, x86_64 + aarch64)
 - Homebrew formula once there's traction
 
@@ -211,9 +219,24 @@ This is the differentiator against the toy scanners. v1 ships with:
 - **Week 4**: CBOM reporter, baseline/suppression, `--fail-on`. Fixture corpus
   complete (every rule has +/- fixtures).
 - **Week 5**: Real-world validation on 3 repos, accuracy docs, honest
-  limitations. GitHub Action + SARIF upload working end-to-end.
-- **Week 6**: Docs (README with HNDL story + CNSA 2.0 table + pqc-scan
+  limitations. GitHub Action + SARIF upload working end-to-end.- **Week 6**: Docs (README with HNDL story + CNSA 2.0 table + pqc-scan
   comparison), release workflow, crates.io publish, announcement.
+
+**Status as of 2026-09-30 (week 5, done)** — week 5 pulled forward: `--exclude`
+(glob, repeatable + comma-separated) added to `scan` and `init` so self-scans
+skip `tests/fixtures/`; `docs/accuracy.md` publishes the real-world
+validation (paramiko 15, golang-jwt 14, libtomcrypt 131 findings, zero false
+positives — method, per-rule precision notes, and what validation doesn't
+prove); README gained the HNDL story, a deadline table (UK NCSC 2028–2035,
+US federal 2030, CNSA 2.0 2031, EU 2026–2035), and expanded honest
+limitations (obfuscated code, dynamic loading, PKCS#12/DSA blind spots,
+unmeasured recall); SNOOT003/009 retitled "RSA/EC private key material"
+(they fire on DER/JWK too); `action.yml` composite action installs via
+`cargo install --git` and uploads SARIF to code scanning (validated locally;
+prebuilt binaries land with the release workflow); self-scan gate enabled in
+CI (`scan . --exclude 'tests/fixtures/**' --fail-on medium`) and green —
+snoot is clean on its own repo. Remaining: release workflow, crates.io
+publish, announcement (week 6).
 
 ## 14. Open questions
 

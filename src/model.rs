@@ -117,8 +117,9 @@ pub struct Finding {
     pub remediation: String,
     /// Optional pointer at what orange can verify/replace (the front door).
     pub orange_note: Option<String>,
-    /// Stable fingerprint (rule id + file + normalized snippet hash) so
-    /// baselines survive line shifts. See DESIGN.md §5.
+    /// Stable fingerprint (rule id + file + normalized snippet + evidence
+    /// detail hash) so baselines survive line shifts while still telling two
+    /// distinct findings on the same line apart. See DESIGN.md §5.
     pub fingerprint: String,
 }
 
@@ -134,7 +135,7 @@ impl Finding {
     ) -> Self {
         let path = path.into();
         let snippet_norm = snippet.as_deref().unwrap_or("").trim();
-        let fingerprint = Self::fingerprint(&rule.id, &path, snippet_norm);
+        let fingerprint = Self::fingerprint(&rule.id, &path, snippet_norm, &evidence.detail);
         Self {
             rule_id: rule.id.clone(),
             severity: rule.severity,
@@ -155,9 +156,9 @@ impl Finding {
     /// Deterministic 64-bit FNV-1a hex. No extra dependencies, stable across runs.
     // Week-1 API surface: used by baseline suppression starting week 4.
     #[allow(dead_code)]
-    pub fn fingerprint(rule_id: &str, path: &str, snippet: &str) -> String {
+    pub fn fingerprint(rule_id: &str, path: &str, snippet: &str, detail: &str) -> String {
         let mut hash: u64 = 0xcbf29ce484222325;
-        for byte in format!("{rule_id}\0{path}\0{snippet}").bytes() {
+        for byte in format!("{rule_id}\0{path}\0{snippet}\0{detail}").bytes() {
             hash ^= byte as u64;
             hash = hash.wrapping_mul(0x100000001b3);
         }
