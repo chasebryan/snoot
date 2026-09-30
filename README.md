@@ -1,4 +1,4 @@
-![snoot](assets/banner.jpg)
+![snoot](assets/banner.png)
 
 # snoot
 
