@@ -21,17 +21,16 @@ Repo → Add file → Create new file, one at a time:
   `~/workspace/snoot/.github/workflows/ci.yml`
 - `.github/workflows/release.yml` — local copy at
   `~/workspace/snoot/.github/workflows/release.yml` (built in week 6)
+- `tests/fixtures/secrets/rsa_key.der` and `tests/fixtures/secrets/ec_key.der`
+  — binary DER fixtures; the API mangles binary uploads, so these go up
+  through the web UI too. Tests fail without them.
 
 Commit each directly to `main`.
 
-## 2. Push the week-6 tree
+## 2. Week-6 tree — already pushed
 
-```bash
-cd ~/workspace/snoot
-git add -A
-git commit -m "week 6: release prep (checklist, release workflow, docs)"
-git push origin main
-```
+The full tree (weeks 2–6, 22 rules, docs, action) was pushed via the API
+on 2026-09-30. Nothing left to push except the files in §1 above.
 
 ## 3. Publish to crates.io
 
