@@ -107,7 +107,16 @@ impl Engine for SecretsEngine {
                 while j < lines.len() && !lines[j].trim().starts_with(&end_tag) {
                     j += 1;
                 }
-                let body_lines = &lines[i + 1..j.min(lines.len())];
+                if j == lines.len() {
+                    i += 1;
+                    continue;
+                }
+                let body_lines = &lines[i + 1..j];
+                let body: String = body_lines.iter().map(|line| line.trim()).collect();
+                if body.is_empty() {
+                    i = j + 1;
+                    continue;
+                }
                 let mut detail = detail.to_string();
                 let mut title_override = None;
                 if rule_id == "SNOOT003" {
@@ -127,7 +136,7 @@ impl Engine for SecretsEngine {
                         &rule,
                         path_str.clone(),
                         Some((i + 1) as u32),
-                        Some(trimmed.to_string()),
+                        Some(body),
                         Evidence {
                             kind: "pem_block".to_string(),
                             detail,
@@ -136,6 +145,7 @@ impl Engine for SecretsEngine {
                     if let Some(title) = title_override {
                         finding.title = title;
                     }
+                    finding.location.snippet = Some(trimmed.to_string());
                     findings.push(finding);
                 }
                 i = j.saturating_add(1);
@@ -177,68 +187,62 @@ fn jwk_file(path: &Path) -> bool {
 }
 
 fn scan_jwk_private(path: &Path, text: &str) -> Vec<Finding> {
-    let lower = text
-        .to_ascii_lowercase()
-        .replace([' ', '\n', '\r', '\t'], "");
-    let has_d = lower.contains("\"d\":\"");
-    let is_rsa = lower.contains("\"kty\":\"rsa\"") && lower.contains("\"n\":\"");
-    let is_ec = lower.contains("\"kty\":\"ec\"") && lower.contains("\"x\":\"");
-    if !has_d || !(is_rsa || is_ec) {
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(text) else {
         return Vec::new();
-    }
-
-    let mut detail = if is_rsa {
-        "JWK RSA private key (kty=RSA with d)".to_string()
-    } else {
-        "JWK EC private key (kty=EC with d)".to_string()
     };
-    if is_rsa {
-        if let Some(bits) = jwk_rsa_modulus_bits(&lower) {
-            detail = format!("{detail}, ~{bits}-bit");
-        }
-    }
-
     let Some(rule) = RuleRegistry::by_id("SNOOT017") else {
         return Vec::new();
     };
-
-    let mut line_no = None;
-    let mut snippet = None;
-    for (idx, line) in text.lines().enumerate() {
-        let l = line.to_ascii_lowercase();
-        if l.contains("\"kty\"") {
-            line_no = Some((idx + 1) as u32);
-            snippet = Some(line.trim().chars().take(120).collect());
-            break;
+    let keys = document.get("keys").and_then(|keys| keys.as_array());
+    let candidates: Vec<_> = match keys {
+        Some(keys) => keys.iter().collect(),
+        None => vec![&document],
+    };
+    let mut findings = Vec::new();
+    for key in candidates {
+        let string = |field| {
+            key.get(field)
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.is_empty())
+        };
+        let Some(kind @ ("RSA" | "EC")) = string("kty") else {
+            continue;
+        };
+        if string("d").is_none() || string(if kind == "RSA" { "n" } else { "x" }).is_none() {
+            continue;
         }
+        let mut detail = format!("JWK {kind} private key (kty={kind} with d)");
+        if kind == "RSA" {
+            if let Some(bits) = string("n").and_then(jwk_rsa_modulus_bits) {
+                detail = format!("{detail}, {bits}-bit");
+            }
+        }
+        let mut finding = Finding::new(
+            &rule,
+            path.to_string_lossy().replace('\\', "/"),
+            None,
+            Some(serde_json::to_string(key).expect("JSON value serializes")),
+            Evidence {
+                kind: "jwk".to_string(),
+                detail,
+            },
+        );
+        // JSON parsing does not provide source spans. Omit the line instead of
+        // guessing, and never include private fields in the displayed snippet.
+        finding.location.snippet = Some(format!("JWK {kind} private key [redacted]"));
+        findings.push(finding);
     }
-
-    vec![Finding::new(
-        &rule,
-        path.to_string_lossy().replace('\\', "/"),
-        line_no,
-        snippet,
-        Evidence {
-            kind: "jwk".to_string(),
-            detail,
-        },
-    )]
+    findings
 }
 
-/// Approximate RSA modulus bit length from a base64url JWK `n` value.
-fn jwk_rsa_modulus_bits(compact_lower: &str) -> Option<u32> {
-    let key = "\"n\":\"";
-    let start = compact_lower.find(key)? + key.len();
-    let end = compact_lower[start..].find('"')? + start;
-    let n_b64 = &compact_lower[start..end];
-    let n_b64 = n_b64.replace('-', "+").replace('_', "/");
-    // pad
-    let pad = (4 - n_b64.len() % 4) % 4;
-    let n_b64 = format!("{n_b64}{}", "=".repeat(pad));
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(n_b64)
+fn jwk_rsa_modulus_bits(modulus: &str) -> Option<u32> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(modulus.trim_end_matches('='))
         .ok()?;
-    Some(bytes.len() as u32 * 8)
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(integer_bit_length(&bytes))
 }
 
 fn decode_pem_body(body_lines: &[&str]) -> Option<Vec<u8>> {
@@ -429,5 +433,34 @@ mod tests {
     fn integer_bit_length_strips_leading_zero() {
         assert_eq!(integer_bit_length(&[0x00, 0x80]), 8);
         assert_eq!(integer_bit_length(&[0x01]), 1);
+    }
+
+    #[test]
+    fn changed_pem_body_changes_fingerprint_without_exposing_payload() {
+        let first = "-----BEGIN RSA PRIVATE KEY-----\nQUJDREVGRw==\n-----END RSA PRIVATE KEY-----";
+        let second = first.replace("QUJDREVGRw==", "SElKS0xNTg==");
+        let a = SecretsEngine.scan(Path::new("secret.pem"), first.as_bytes());
+        let b = SecretsEngine.scan(Path::new("secret.pem"), second.as_bytes());
+        assert_eq!(a.len(), 1);
+        assert_eq!(b.len(), 1);
+        assert_ne!(a[0].fingerprint, b[0].fingerprint);
+        assert!(!serde_json::to_string(&a).unwrap().contains("QUJDREVGRw=="));
+    }
+
+    #[test]
+    fn jwk_fields_must_belong_to_the_same_key_and_payloads_stay_redacted() {
+        let unrelated = br#"{"keys":[{"kty":"RSA","n":"gA"},{"d":"SECRET"}]}"#;
+        assert!(SecretsEngine
+            .scan(Path::new("keys.jwk"), unrelated)
+            .is_empty());
+        let first = br#"{"kty":"RSA","n":"gA","d":"SECRET"}"#;
+        let second = br#"{"kty":"RSA","n":"gA","d":"CHANGED"}"#;
+        let a = SecretsEngine.scan(Path::new("keys.jwk"), first);
+        let b = SecretsEngine.scan(Path::new("keys.jwk"), second);
+        assert_eq!(a.len(), 1);
+        assert_ne!(a[0].fingerprint, b[0].fingerprint);
+        assert!(!serde_json::to_string(&a).unwrap().contains("SECRET"));
+        assert_eq!(jwk_rsa_modulus_bits("gA"), Some(8));
+        assert_eq!(jwk_rsa_modulus_bits("AQ"), Some(1));
     }
 }

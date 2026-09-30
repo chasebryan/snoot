@@ -92,7 +92,9 @@ fn multi_language_positives_detected() {
         "/tls/",
     ] {
         assert!(
-            paths.iter().any(|p| p.contains(needle)),
+            paths
+                .iter()
+                .any(|p| p.starts_with(needle.trim_start_matches('/'))),
             "expected a finding under *{needle}*, got {paths:?}"
         );
     }

@@ -10,6 +10,10 @@ inputs:
     description: 'Fail the job if findings at or above this severity (info|low|medium|high|critical). Empty skips gating.'
     required: false
     default: ''
+  baseline:
+    description: 'Optional baseline file for suppressing accepted findings'
+    required: false
+    default: ''
   sarif:
     description: 'SARIF output path (uploaded by the caller or a follow-up step)'
     required: false
@@ -18,18 +22,27 @@ runs:
   using: 'composite'
   steps:
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: '1.90.0'
+      shell: bash
+      run: rustup toolchain install 1.90.0 --profile minimal
     - name: Build snoot
       shell: bash
-      run: cargo install --path "${{ github.action_path }}" --locked
+      env:
+        SNOOT_ACTION_PATH: ${{ github.action_path }}
+      run: cargo +1.90.0 install --path "$SNOOT_ACTION_PATH" --locked
     - name: Run snoot scan
       shell: bash
+      env:
+        SNOOT_SCAN_PATH: ${{ inputs.path }}
+        SNOOT_SARIF: ${{ inputs.sarif }}
+        SNOOT_FAIL_ON: ${{ inputs.fail-on }}
+        SNOOT_BASELINE: ${{ inputs.baseline }}
       run: |
         set -euo pipefail
-        args=(scan "${{ inputs.path }}" --format sarif --output "${{ inputs.sarif }}" --format console)
-        if [[ -n "${{ inputs.fail-on }}" ]]; then
-          args+=(--fail-on "${{ inputs.fail-on }}")
+        args=(scan "$SNOOT_SCAN_PATH" --format sarif --output "$SNOOT_SARIF")
+        if [[ -n "$SNOOT_FAIL_ON" ]]; then
+          args+=(--fail-on "$SNOOT_FAIL_ON")
+        fi
+        if [[ -n "$SNOOT_BASELINE" ]]; then
+          args+=(--baseline "$SNOOT_BASELINE")
         fi
         snoot "${args[@]}"

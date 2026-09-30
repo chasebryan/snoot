@@ -37,7 +37,6 @@ pub trait Engine {
     fn file_matches(&self, path: &Path) -> bool;
 
     /// Scan one file's bytes; return zero or more findings.
-    /// `path` is the full path as walked; engines should relativize it
-    /// themselves if they need display paths.
+    /// `path` is relative to the scan root, for portable finding fingerprints.
     fn scan(&self, path: &Path, content: &[u8]) -> Vec<Finding>;
 }

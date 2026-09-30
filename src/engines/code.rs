@@ -62,16 +62,19 @@ impl Engine for CodeEngine {
                 let node = capture.node;
                 let line = (node.start_position().row + 1) as u32;
                 let snippet = snippet_for(node, content);
-                findings.push(Finding::new(
+                let displayed = truncate(&snippet, 120);
+                let mut finding = Finding::new(
                     rule,
                     path_str.clone(),
                     Some(line),
-                    Some(snippet.clone()),
+                    Some(snippet),
                     Evidence {
                         kind: "api_call".to_string(),
-                        detail: snippet,
+                        detail: displayed.clone(),
                     },
-                ));
+                );
+                finding.location.snippet = Some(displayed);
+                findings.push(finding);
             }
         }
 
@@ -162,7 +165,7 @@ fn snippet_for(node: tree_sitter::Node<'_>, content: &[u8]) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    truncate(&text, 120)
+    text
 }
 
 fn path_string(path: &Path) -> String {
@@ -266,6 +269,23 @@ fn docs() {
     fn live_languages_are_wired() {
         for lang in live_languages() {
             assert!(ts_language(lang).is_some(), "missing grammar for {lang}");
+        }
+    }
+
+    #[test]
+    fn all_live_queries_compile_and_capture_evidence() {
+        for rule in RuleRegistry::all() {
+            for query in rule.queries {
+                if let Some(language) = ts_language(&query.language) {
+                    let compiled = Query::new(&language, &query.query)
+                        .unwrap_or_else(|err| panic!("{} ({}): {err}", rule.id, query.language));
+                    assert!(
+                        !compiled.capture_names().is_empty(),
+                        "{} captures no evidence",
+                        rule.id
+                    );
+                }
+            }
         }
     }
 }

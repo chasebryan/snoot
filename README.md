@@ -14,8 +14,9 @@ compliance artifact), and JSON.
 **Status: pre-alpha — week 2/3 of 6.** Tree-sitter detection is live for all six
 v1 languages (Rust, Python, Go, JS/TS, Java, C/C++), with 20 rules, PEM private
 key detection, classical-only TLS flagging, direct-manifest crypto deps,
-baseline/`snoot init`, and a GitHub Action. Full ASN.1/JWK parsing and
-lockfile/transitive analysis are next. See [DESIGN.md](DESIGN.md). Nothing
+baseline/`snoot init`, and a GitHub Action. Baselines are portable across
+checkouts; SARIF and CycloneDX reports have schema validation in CI. Complete
+key/certificate parsing and broader accuracy validation remain unfinished. See [DESIGN.md](DESIGN.md). Nothing
 here has been independently reviewed. Trust is the product, so the gaps are
 documented, not hidden.
 
@@ -33,6 +34,59 @@ snoot rules              # list detection rules
 Optional `{repo}/.snootignore` excludes paths (gitignore-style). This repo
 ignores `tests/fixtures/` so self-scans stay clean while the accuracy gate
 still scans that tree explicitly.
+
+Requires Rust 1.90 or later; the checkout pins the tested toolchain.
+
+### Baselines and CI
+
+```sh
+# Review the findings, then record the accepted starting point.
+snoot init ./myapp --output .snoot-baseline.json
+snoot scan ./myapp --baseline .snoot-baseline.json --fail-on high
+
+# Replace a baseline deliberately after reviewing the changes.
+snoot init ./myapp --output .snoot-baseline.json --force
+
+# Multiple formats write separate files into a directory.
+snoot scan ./myapp --format sarif --format cbom --format json --output reports
+```
+
+The directory receives `snoot.sarif`, `snoot.cdx.json`, and `snoot.json`
+(`snoot.txt` for console output). Multiple formats require `--output`; a
+single format writes to stdout or the named output file. Existing report
+files at those destinations are excluded from the scan.
+
+Baselines contain a version and sorted fingerprints, with no source snippets
+or private key payloads. Paths are relative to the scan root, so the same
+source tree can move between machines. Moving code down a file preserves its
+fingerprint. Changing the matched call, key body, or relative filename reports
+it again. Use the same root boundary when creating and applying a baseline.
+Identical matched calls in the same file share a fingerprint and are suppressed
+together; baselines do not track the number of copies.
+
+Exit codes: **0** for a completed scan below the requested threshold, **2**
+for findings at or above `--fail-on` (also used by clap for invalid CLI
+arguments), and **3** for scan, baseline, or output errors. Reports are written
+before the findings exit code is returned. Suppressed findings do not fail CI.
+Missing paths, unreadable files, and invalid baseline files fail the scan.
+
+### Development checks
+
+```sh
+cargo fmt --all --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo run --locked -- scan . --fail-on high
+
+# Optional report-schema check; only this development script downloads schemas.
+python -m pip install jsonschema==4.23.0
+python scripts/validate_reports.py target/debug/snoot
+```
+
+The repository self-scan honors `.snootignore`, which excludes the intentional
+fixture findings. The fixture tests scan those files separately. Report schema
+checks use pinned official SARIF 2.1.0 and CycloneDX 1.6 schemas, with both
+positive and empty reports. The scanner itself stays offline.
 
 ## Why
 
@@ -81,6 +135,21 @@ developer-native option:
 - Direct dependencies only; transitive analysis is out of scope for v1.
 - Symmetric crypto and hashes get hygiene flags at most; v1 is about the
   quantum-vulnerable public-key surface.
+
+- Existing baselines from before root-relative fingerprints must be regenerated.
+  Duplicate queries at one location are collapsed; identical calls at different
+  lines remain separate findings but share baseline suppression.
+- Read and traversal errors fail the scan. Binary, non-UTF-8, unsupported, and
+  oversized (over 4 MiB) files are skipped and counted; build/dependency
+  directories and `.snootignore` matches are pruned. Symlinks are not followed.
+- PEM bodies and private JWK fields are redacted from reports. JWK detection
+  parses JSON objects and JWKS `keys` arrays; arbitrary nested objects, YAML,
+  escaped PEM strings, and full certificate algorithms remain unsupported.
+- CBOM includes extracted private-key sizes where available. Unproven algorithm
+  uses, execution environments, modes, and curves are omitted or marked unknown.
+- TLS and dependency findings are heuristics, not proof of active cryptography.
+  Real-world observations in [docs/accuracy.md](docs/accuracy.md) still need a
+  labelled accuracy assessment before release claims can be made.
 
 ## License
 

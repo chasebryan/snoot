@@ -1,29 +1,24 @@
-//! Scan orchestration: walk the tree, dispatch per-file engines, collect findings.
-//!
-//! The scanner walks files with `walkdir`, honors `.snootignore`, asks each
-//! engine whether a file is in scope, dedupes by fingerprint, and applies an
-//! optional baseline.
+//! Walk a source tree, dispatch engines, normalize paths, and apply a baseline.
 
 use std::collections::HashSet;
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::Context;
+use anyhow::{ensure, Context};
 use serde::{Deserialize, Serialize};
 
+use crate::baseline::Baseline;
 use crate::engines::{CodeEngine, Engine, ManifestEngine, SecretsEngine, TlsConfEngine};
 use crate::ignore::{self, IgnoreList};
 use crate::model::Finding;
 
-/// Options controlling a scan.
 #[derive(Debug)]
 pub struct ScanOptions {
-    /// Root of the source tree to scan.
     pub root: PathBuf,
-    /// Optional baseline file: findings recorded there are suppressed.
     pub baseline: Option<PathBuf>,
-    /// Skip files larger than this (bytes). Guards against accidental
-    /// multi-gigabyte blobs in the tree.
+    /// Report and baseline outputs must not be scanned as source inputs.
+    pub excluded_paths: Vec<PathBuf>,
     pub max_file_bytes: u64,
 }
 
@@ -32,28 +27,28 @@ impl Default for ScanOptions {
         Self {
             root: PathBuf::from("."),
             baseline: None,
+            excluded_paths: Vec::new(),
             max_file_bytes: 4 * 1024 * 1024,
         }
     }
 }
 
-/// Aggregate statistics for a scan, shown in the console summary.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScanStats {
     pub files_scanned: u64,
     pub files_skipped: u64,
+    pub findings_suppressed: u64,
     pub elapsed_ms: u64,
 }
 
-/// Everything a scan produced.
 #[derive(Debug)]
 pub struct ScanReport {
     pub findings: Vec<Finding>,
     pub stats: ScanStats,
+    /// Absolute directory against which finding paths are relative.
     pub root: PathBuf,
 }
 
-/// Directories that are never worth scanning.
 const SKIP_DIRS: &[&str] = &[
     ".git",
     ".hg",
@@ -67,11 +62,30 @@ const SKIP_DIRS: &[&str] = &[
     "build",
 ];
 
-/// Walk `opts.root`, run every engine over every in-scope file, and return
-/// the collected findings sorted by severity (descending), then path.
 pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
     let started = Instant::now();
-    let ignore = IgnoreList::load_from_root(&opts.root);
+    let root = opts
+        .root
+        .canonicalize()
+        .with_context(|| format!("opening scan path {}", opts.root.display()))?;
+    ensure!(
+        root.is_file() || root.is_dir(),
+        "scan path must be a file or directory"
+    );
+    let source_root = if root.is_file() {
+        root.parent().unwrap().to_path_buf()
+    } else {
+        root.clone()
+    };
+    let ignore = IgnoreList::load_from_root(&source_root);
+    // Fail before scanning if suppression was requested but cannot be trusted.
+    let baseline = opts.baseline.as_deref().map(Baseline::load).transpose()?;
+    let excluded: Vec<_> = opts
+        .excluded_paths
+        .iter()
+        .chain(opts.baseline.iter())
+        .filter_map(|path| path.canonicalize().ok())
+        .collect();
 
     let engines: Vec<Box<dyn Engine>> = vec![
         Box::new(CodeEngine),
@@ -79,110 +93,99 @@ pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
         Box::new(ManifestEngine),
         Box::new(TlsConfEngine),
     ];
-
-    let mut findings: Vec<Finding> = Vec::new();
-    let mut files_scanned: u64 = 0;
-    let mut files_skipped: u64 = 0;
-
-    let root = opts.root.clone();
-    let walker = walkdir::WalkDir::new(&opts.root)
+    let mut findings = Vec::new();
+    let mut stats = ScanStats::default();
+    let walker = walkdir::WalkDir::new(&root)
         .follow_links(false)
         .into_iter()
         .filter_entry(|entry| {
-            if entry.file_type().is_dir() {
-                if let Some(name) = entry.file_name().to_str() {
-                    if SKIP_DIRS.contains(&name) {
-                        return false;
-                    }
-                }
-                let rel = ignore::rel_path(&root, entry.path());
-                let rel_str = rel.to_string_lossy().replace('\\', "/");
-                if ignore.ignores_dir(&rel_str) {
-                    return false;
-                }
+            if entry.depth() == 0 || !entry.file_type().is_dir() {
+                return true;
             }
-            true
+            let relative = ignore::rel_path(&source_root, entry.path());
+            !entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| SKIP_DIRS.contains(&name))
+                && !ignore.ignores_dir(&relative.to_string_lossy())
         });
 
     for entry in walker {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(_) => {
-                files_skipped += 1;
-                continue;
-            }
-        };
+        // An unreadable subtree must never turn into a successful clean scan.
+        let entry = entry.context("walking scan path")?;
         if !entry.file_type().is_file() {
+            if entry.file_type().is_symlink() {
+                stats.files_skipped += 1;
+            }
             continue;
         }
         let path = entry.path();
-        let rel = ignore::rel_path(&opts.root, path);
-        let rel_str = rel.to_string_lossy().replace('\\', "/");
-        if ignore.ignores(&rel_str) {
-            files_skipped += 1;
+        let relative = path
+            .strip_prefix(&source_root)
+            .context("normalizing finding path")?;
+        if ignore.ignores(&relative.to_string_lossy())
+            || excluded.iter().any(|excluded| path == excluded)
+            || !engines.iter().any(|engine| engine.file_matches(relative))
+        {
+            stats.files_skipped += 1;
             continue;
         }
-
-        let content = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                files_skipped += 1;
-                continue;
-            }
-        };
-        if content.len() as u64 > opts.max_file_bytes {
-            files_skipped += 1;
+        let metadata = entry
+            .metadata()
+            .with_context(|| format!("reading metadata for {}", path.display()))?;
+        if metadata.len() > opts.max_file_bytes {
+            stats.files_skipped += 1;
             continue;
         }
-        // Skip likely-binary files early (NUL byte heuristic).
-        if content.iter().take(8192).any(|&b| b == 0) {
-            files_skipped += 1;
+        let file =
+            std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+        let mut content = Vec::new();
+        // Cap the read in case a file grows after its metadata was checked.
+        file.take(opts.max_file_bytes.saturating_add(1))
+            .read_to_end(&mut content)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if content.len() as u64 > opts.max_file_bytes
+            || content.contains(&0)
+            || std::str::from_utf8(&content).is_err()
+        {
+            stats.files_skipped += 1;
             continue;
         }
-
-        files_scanned += 1;
+        stats.files_scanned += 1;
         for engine in &engines {
-            if engine.file_matches(path) {
-                findings.extend(engine.scan(path, &content));
+            if engine.file_matches(relative) {
+                findings.extend(engine.scan(relative, &content));
             }
         }
     }
 
-    // Dedupe identical fingerprints (multiple queries can hit one call site).
+    // Queries may report the same call more than once; retain distinct locations.
     let mut seen = HashSet::new();
-    findings.retain(|f| seen.insert(f.fingerprint.clone()));
-
-    // DESIGN.md §6: classical crypto in test/example code is medium, not
-    // high/critical — still inventoried, but not CI-blocking by default.
+    findings.retain(|f| seen.insert((f.fingerprint.clone(), f.location.line, f.location.column)));
     demote_test_path_severity(&mut findings);
-
-    // Apply baseline suppression when requested.
-    if let Some(baseline_path) = &opts.baseline {
-        match crate::baseline::Baseline::load(baseline_path) {
-            Ok(baseline) => {
-                findings.retain(|f| !baseline.suppresses(f));
+    if let Some(baseline) = baseline {
+        findings.retain(|finding| {
+            if baseline.suppresses(finding) {
+                stats.findings_suppressed += 1;
+                false
+            } else {
+                true
             }
-            Err(err) => {
-                anyhow::bail!("loading baseline {}: {err:#}", baseline_path.display());
-            }
-        }
+        });
     }
-
     findings.sort_by(|a, b| {
         b.severity
             .cmp(&a.severity)
             .then_with(|| a.location.path.cmp(&b.location.path))
             .then_with(|| a.location.line.cmp(&b.location.line))
+            .then_with(|| a.rule_id.cmp(&b.rule_id))
+            .then_with(|| a.fingerprint.cmp(&b.fingerprint))
     });
-
+    stats.elapsed_ms = started.elapsed().as_millis() as u64;
     Ok(ScanReport {
         findings,
-        stats: ScanStats {
-            files_scanned,
-            files_skipped,
-            elapsed_ms: started.elapsed().as_millis() as u64,
-        },
-        root: opts.root.clone(),
+        stats,
+        root: source_root,
     })
 }
 
@@ -217,23 +220,32 @@ fn demote_test_path_severity(findings: &mut [Finding]) {
     }
 }
 
-/// Relativize `path` against the scan root for display, falling back to the
-/// full path. Context helper used by reporters.
-#[allow(dead_code)]
-pub fn display_path(root: &PathBuf, path: &str) -> String {
-    PathBuf::from(path)
-        .strip_prefix(root)
-        .map(|p| p.to_string_lossy().into_owned())
-        .with_context(|| format!("strip prefix {}", root.display()))
-        .unwrap_or_else(|_| path.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{Evidence, Severity};
     use crate::rules::RuleRegistry;
 
+    #[test]
+    fn skips_large_binary_and_non_utf8_files_and_prunes_build_output() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("large.py"), vec![b'a'; 101]).unwrap();
+        std::fs::write(dir.path().join("binary.py"), b"RSA.generate(2048)\0").unwrap();
+        std::fs::write(dir.path().join("invalid.py"), [0xff]).unwrap();
+        std::fs::write(dir.path().join("good.py"), b"RSA.generate(2048)").unwrap();
+        std::fs::create_dir(dir.path().join("target")).unwrap();
+        std::fs::write(dir.path().join("target/ignored.py"), b"RSA.generate(2048)").unwrap();
+        let report = scan(&ScanOptions {
+            root: dir.path().to_owned(),
+            max_file_bytes: 100,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].location.path, "good.py");
+        assert_eq!(report.stats.files_skipped, 3);
+        assert_eq!(report.stats.files_scanned, 1);
+    }
     #[test]
     fn demotes_critical_in_tests_dir() {
         let rule = RuleRegistry::by_id("SNOOT003").unwrap();

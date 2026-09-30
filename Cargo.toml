@@ -2,6 +2,7 @@
 name = "snoot"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.90"
 description = "Snoot out the crypto hiding in your codebase."
 license = "AGPL-3.0-only"
 repository = "https://github.com/chasebryan/snoot"
@@ -30,6 +31,7 @@ tree-sitter-java = "0.23"
 tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
 base64 = "0.22"
+tempfile = "3"
 
 [dev-dependencies]
 

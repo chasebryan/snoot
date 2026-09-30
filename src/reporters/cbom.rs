@@ -1,129 +1,170 @@
-//! CBOM reporter: CycloneDX 1.6 Cryptography Bill of Materials.
-//!
-//! Emits `components` of type `cryptographic-asset` with `cryptoProperties`
-//! derived from the snoot rule that fired. Key-size / mode extraction improves
-//! as the secrets engine grows ASN.1 support.
+//! CycloneDX 1.6 reports using schema-defined asset types and primitives.
 
 use serde_json::{json, Value};
 
+use crate::model::Finding;
 use crate::scanner::ScanReport;
 
-fn key_size_from_detail(detail: &str) -> Option<u32> {
-    // e.g. "RSA PRIVATE KEY (PKCS#1 PEM, 2048-bit)"
-    let idx = detail.find("-bit")?;
-    let start = detail[..idx].rfind(|c: char| !c.is_ascii_digit())? + 1;
-    detail[start..idx].parse().ok()
-}
-
-fn primitive_for(rule_id: &str) -> (&'static str, &'static str) {
-    match rule_id {
-        "SNOOT001" | "SNOOT003" | "SNOOT011" => ("RSA", "key-agreement-or-signature"),
-        "SNOOT002" | "SNOOT009" => ("ECDSA", "signature"),
-        "SNOOT004" => ("DH", "key-agreement"),
-        "SNOOT005" | "SNOOT018" => ("TLS", "protocol"),
-        "SNOOT006" => ("ECDH", "key-agreement"),
+fn asset(finding: &Finding) -> (&str, &str, Option<Value>) {
+    let material = |format| {
+        json!({
+            "assetType": "related-crypto-material",
+            "relatedCryptoMaterialProperties": { "type": "private-key", "format": format }
+        })
+    };
+    let (name, primitive) = match finding.rule_id.as_str() {
+        "SNOOT003" => {
+            return (
+                "RSA private key",
+                "cryptographic-asset",
+                Some(material("PEM")),
+            )
+        }
+        "SNOOT009" => {
+            return (
+                "EC private key",
+                "cryptographic-asset",
+                Some(material("PEM")),
+            )
+        }
+        "SNOOT010" => return ("Private key", "cryptographic-asset", Some(material("PEM"))),
+        "SNOOT017" => {
+            return (
+                "JWK private key",
+                "cryptographic-asset",
+                Some(material("JWK")),
+            )
+        }
+        "SNOOT005" | "SNOOT018" => {
+            return (
+                "TLS",
+                "cryptographic-asset",
+                Some(json!({
+                    "assetType": "protocol", "protocolProperties": { "type": "tls" }
+                })),
+            )
+        }
+        "SNOOT020" => {
+            return (
+                "X.509 certificate",
+                "cryptographic-asset",
+                Some(json!({
+                    "assetType": "certificate", "certificateProperties": { "certificateFormat": "PEM" }
+                })),
+            )
+        }
+        "SNOOT016" => return (finding.title.as_str(), "library", None),
+        // A key-generation call does not establish encryption vs signing use.
+        "SNOOT001" => ("RSA", "unknown"),
+        "SNOOT002" => ("ECDSA", "signature"),
+        "SNOOT004" => ("DH", "key-agree"),
+        "SNOOT006" => ("ECDH", "key-agree"),
         "SNOOT007" => ("DSA", "signature"),
-        "SNOOT010" => ("private-key", "key"),
-        "SNOOT008" => ("classical-signature", "signature"),
+        "SNOOT008" => ("Classical signature", "signature"),
+        "SNOOT011" => ("RSA", "pke"),
         "SNOOT012" => ("MD5", "hash"),
         "SNOOT013" => ("SHA-1", "hash"),
         "SNOOT014" => ("Ed25519", "signature"),
         "SNOOT015" => ("DES", "block-cipher"),
-        "SNOOT016" => ("dependency", "library"),
-        "SNOOT017" => ("JWK", "key"),
         "SNOOT019" => ("RC4", "stream-cipher"),
-        "SNOOT020" => ("X.509", "certificate"),
-        _ => ("unknown", "other"),
+        _ => (finding.title.as_str(), "unknown"),
+    };
+    let mut properties = json!({
+        "assetType": "algorithm",
+        "algorithmProperties": { "primitive": primitive }
+    });
+    if finding.rule_id == "SNOOT001" {
+        properties["algorithmProperties"]["cryptoFunctions"] = json!(["keygen"]);
     }
+    (name, "cryptographic-asset", Some(properties))
 }
 
-/// Render the report as a CycloneDX 1.6 CBOM JSON document (as a string).
-pub fn render(report: &ScanReport) -> String {
+fn key_size_from_detail(detail: &str) -> Option<u32> {
+    detail
+        .split_whitespace()
+        .find_map(|word| word.strip_suffix("-bit")?.parse().ok())
+}
+
+pub fn render(report: &ScanReport) -> anyhow::Result<String> {
     let components: Vec<Value> = report
         .findings
         .iter()
-        .map(|f| {
-            let (primitive, purpose) = primitive_for(&f.rule_id);
-            let param = key_size_from_detail(&f.evidence.detail);
-            let mut alg = json!({
-                "primitive": primitive,
-                "executionEnvironment": "local",
-                "purpose": purpose,
-            });
-            if let Some(bits) = param {
-                alg["parameterSetIdentifier"] = json!(format!("{bits}"));
+        .enumerate()
+        .map(|(index, finding)| {
+            let (name, component_type, properties) = asset(finding);
+            let mut occurrence = json!({ "location": finding.location.path });
+            if let Some(line) = finding.location.line {
+                occurrence["line"] = json!(line);
             }
-            json!({
-                "type": "cryptographic-asset",
-                "name": f.title,
-                "cryptoProperties": {
-                    "assetType": "algorithm",
-                    "algorithmProperties": alg,
-                },
-                "evidence": {
-                    "occurrences": [{
-                        "location": f.location.path,
-                        "line": f.location.line,
-                    }],
-                },
+            let mut component = json!({
+                "type": component_type,
+                "bom-ref": format!("snoot:{}:{index}", finding.fingerprint),
+                "name": name,
+                "description": finding.title,
+                "evidence": { "occurrences": [occurrence] },
                 "properties": [
-                    { "name": "snoot:ruleId", "value": f.rule_id },
-                    { "name": "snoot:severity", "value": f.severity.to_string() },
-                    { "name": "snoot:fingerprint", "value": f.fingerprint },
-                    { "name": "snoot:evidenceKind", "value": f.evidence.kind },
-                    { "name": "snoot:evidenceDetail", "value": f.evidence.detail },
+                    { "name": "snoot:ruleId", "value": finding.rule_id },
+                    { "name": "snoot:severity", "value": finding.severity.to_string() },
+                    { "name": "snoot:fingerprint", "value": finding.fingerprint },
+                    { "name": "snoot:evidenceKind", "value": finding.evidence.kind },
+                    { "name": "snoot:evidenceDetail", "value": finding.evidence.detail },
                 ],
-            })
+            });
+            if let Some(mut properties) = properties {
+                if properties["assetType"] == "related-crypto-material" {
+                    if let Some(bits) = key_size_from_detail(&finding.evidence.detail) {
+                        properties["relatedCryptoMaterialProperties"]["size"] = json!(bits);
+                    }
+                }
+                component["cryptoProperties"] = properties;
+            }
+            component
         })
         .collect();
-
     let doc = json!({
-        "bomFormat": "CycloneDX",
-        "specVersion": "1.6",
-        "version": 1,
+        "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+        "bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1,
         "metadata": {
-            "tools": {
-                "components": [{
-                    "type": "application",
-                    "name": "snoot",
-                    "version": env!("CARGO_PKG_VERSION"),
-                }]
-            },
+            "tools": { "components": [{
+                "type": "application", "name": "snoot", "version": env!("CARGO_PKG_VERSION")
+            }] },
         },
         "components": components,
     });
-
-    serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_string())
+    Ok(serde_json::to_string_pretty(&doc)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Evidence, Finding};
+    use crate::model::Evidence;
     use crate::rules::RuleRegistry;
-    use crate::scanner::{ScanReport, ScanStats};
-    use std::path::PathBuf;
+    use crate::scanner::ScanStats;
 
     #[test]
-    fn cbom_maps_rsa_primitive() {
-        let rule = RuleRegistry::by_id("SNOOT001").unwrap();
+    fn private_key_size_uses_material_properties_and_unknown_location_is_omitted() {
         let finding = Finding::new(
-            &rule,
-            "a.rs",
-            Some(1),
-            Some("Rsa::generate".into()),
+            &RuleRegistry::by_id("SNOOT003").unwrap(),
+            "key.pem",
+            None,
+            None,
             Evidence {
-                kind: "api_call".into(),
-                detail: "Rsa::generate".into(),
+                kind: "pem_block".into(),
+                detail: "RSA PRIVATE KEY (PKCS#1 PEM), 2048-bit".into(),
             },
         );
         let report = ScanReport {
-            findings: vec![finding],
+            findings: vec![finding.clone(), finding],
             stats: ScanStats::default(),
-            root: PathBuf::from("."),
+            root: ".".into(),
         };
-        let out = render(&report);
-        assert!(out.contains("\"primitive\": \"RSA\""), "{out}");
-        assert!(out.contains("CycloneDX"));
+        let document: Value = serde_json::from_str(&render(&report).unwrap()).unwrap();
+        let first = &document["components"][0];
+        assert_eq!(
+            first["cryptoProperties"]["relatedCryptoMaterialProperties"]["size"],
+            2048
+        );
+        assert!(first["evidence"]["occurrences"][0].get("line").is_none());
+        assert_ne!(first["bom-ref"], document["components"][1]["bom-ref"]);
     }
 }
