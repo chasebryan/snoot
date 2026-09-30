@@ -35,6 +35,13 @@ pub trait Engine {
     /// Cheap pre-filter: is this file worth reading for this engine?
     fn file_matches(&self, path: &Path) -> bool;
 
+    /// Whether this engine can extract findings from binary (non-UTF-8)
+    /// content. The scanner skips NUL-containing files unless a matching
+    /// engine tolerates binary (secrets does: DER blobs are binary).
+    fn tolerates_binary(&self) -> bool {
+        false
+    }
+
     /// Scan one file's bytes; return zero or more findings.
     /// `path` is the full path as walked; engines should relativize it
     /// themselves if they need display paths.

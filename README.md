@@ -1,4 +1,4 @@
-![snoot](assets/banner.png)
+![snoot](assets/banner.jpg)
 
 # snoot
 
@@ -11,12 +11,13 @@ NIST post-quantum replacement (ML-KEM, ML-DSA, SLH-DSA), and emits
 machine-readable evidence: SARIF (GitHub PR annotations), CycloneDX CBOM (the
 compliance artifact), and JSON.
 
-**Status: pre-alpha — week 1 of 6.** The crate skeleton, CLI, data model, and
-first five rules are in. The detection engines are wired but stubbed; see
-[DESIGN.md](DESIGN.md) for the six-week plan. Nothing here has been
-independently reviewed, and week-1 snoot will cheerfully report zero findings
-on code it can't yet read. Trust is the product, so the gaps are documented,
-not hidden.
+**Status: pre-alpha — week 5 of 6.** All four detection engines are live
+(code, secrets, manifests, TLS configs), 22 rules across 8 languages, SARIF +
+CycloneDX CBOM reporters, baseline suppression, `--fail-on` CI gating.
+Validated on three real repos with zero false positives —
+[docs/accuracy.md](docs/accuracy.md). See [DESIGN.md](DESIGN.md) for the plan.
+Nothing here has been independently reviewed. Trust is the product, so the
+gaps are documented, not hidden.
 
 ## Quick start
 
@@ -25,18 +26,29 @@ cargo install --path .   # or: cargo run --
 
 snoot scan ./myapp
 snoot scan ./myapp --format sarif --output results.sarif --fail-on high
+snoot scan ./myapp --exclude 'tests/fixtures/**'   # skip known test keys
 snoot rules              # list detection rules
 ```
 
-## Why
+## Why now: harvest now, decrypt later
 
-NIST finalized the PQC standards (FIPS 203/204/205) in August 2024. Migration
-deadlines are fixed — CNSA 2.0 enforcement 2031, US federal high-value assets
-2030 — and "harvest now, decrypt later" means long-lived data is exposed
-*today*. Every mandate (OMB M-23-02, CNSA 2.0, UK NCSC, EU 2024/1101) leads
-with the same first step: **cryptographic discovery** — inventory where your
-classical crypto lives. Most organizations can't do it. snoot is the
-developer-native, open-source tool for that first step.
+An adversary doesn't need a quantum computer today. They record your
+encrypted traffic and stored data *now*, and decrypt it the day a
+cryptographically-relevant quantum computer arrives. Anything encrypted with
+RSA, ECDSA/ECDH, or finite-field DH that must stay secret past that day is
+already exposed. That's why every mandate — OMB M-23-02, CNSA 2.0, UK NCSC,
+EU 2024/1101 — leads with the same first step: **cryptographic discovery**.
+Inventory where your classical crypto lives, before you can migrate it.
+
+| Deadline | Source |
+|----------|--------|
+| 2028–2035 | UK NCSC phased migration |
+| 2030 | US federal high-value assets (OMB) |
+| 2031 | CNSA 2.0 enforcement |
+| 2026–2035 | EU coordinated migration |
+
+NIST finalized the replacements in August 2024 (FIPS 203 ML-KEM, 204 ML-DSA,
+205 SLH-DSA). The standards are done; the inventory is what's missing.
 
 ## Pipeline
 
@@ -47,12 +59,20 @@ what orange can verify or replace.
 
 ## Honest limitations (v1)
 
-- Heuristic detection; no data-flow analysis yet — a flagged call site means
-  "look here", not "this is exploitable".
+- Heuristic detection; no data-flow analysis — a flagged call site means
+  "look here", not "this is exploitable". snoot doesn't know whether a key
+  protects long-lived data or a test fixture.
+- Can't see obfuscated code, dynamically loaded crypto libraries, or crypto
+  behind FFI boundaries it has no queries for.
+- Deliberate blind spots: PKCS#12 bundles, DSA private keys, and
+  `ENCRYPTED PRIVATE KEY` blocks (algorithm unknowable without the
+  passphrase) produce no findings rather than guesses.
 - Source only: binary / container / firmware analysis is the v2 roadmap.
 - Direct dependencies only; transitive analysis is out of scope for v1.
 - Symmetric crypto and hashes get hygiene flags at most; v1 is about the
   quantum-vulnerable public-key surface.
+- Recall is unmeasured — see [docs/accuracy.md](docs/accuracy.md) for what
+  validation does and doesn't prove.
 
 ## License
 

@@ -7,6 +7,8 @@
 
 mod baseline;
 mod engines;
+#[cfg(test)]
+mod fixture_corpus;
 mod model;
 mod reporters;
 mod rules;
@@ -67,6 +69,11 @@ struct ScanArgs {
     #[arg(long, value_name = "FILE")]
     baseline: Option<PathBuf>,
 
+    /// Skip files matching a glob (relative to the scan root, e.g.
+    /// 'tests/fixtures/**'). Repeatable and comma-separated.
+    #[arg(long, value_name = "GLOB", value_delimiter = ',')]
+    exclude: Vec<String>,
+
     /// Disable colored output
     #[arg(long)]
     no_color: bool,
@@ -85,6 +92,11 @@ struct InitArgs {
     /// Where to write the baseline file
     #[arg(long, default_value = ".snoot-baseline.json", value_name = "FILE")]
     output: PathBuf,
+
+    /// Skip files matching a glob (relative to the scan root).
+    /// Repeatable and comma-separated.
+    #[arg(long, value_name = "GLOB", value_delimiter = ',')]
+    exclude: Vec<String>,
 }
 
 fn main() -> ExitCode {
@@ -106,6 +118,7 @@ fn cmd_scan(args: ScanArgs) -> ExitCode {
     let opts = scanner::ScanOptions {
         root: args.path.clone(),
         baseline: args.baseline.clone(),
+        exclude: args.exclude.clone(),
         ..Default::default()
     };
     let report = match scanner::scan(&opts) {
@@ -156,10 +169,34 @@ fn cmd_scan(args: ScanArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_init(_args: InitArgs) -> ExitCode {
-    // Week 4 milestone: baseline read/write + finding fingerprinting.
-    eprintln!("snoot init: not yet implemented (see DESIGN.md §13, week 4).");
-    ExitCode::from(4)
+fn cmd_init(args: InitArgs) -> ExitCode {
+    let opts = scanner::ScanOptions {
+        root: args.path.clone(),
+        exclude: args.exclude.clone(),
+        ..Default::default()
+    };
+    let report = match scanner::scan(&opts) {
+        Ok(report) => report,
+        Err(err) => {
+            eprintln!("snoot: scan failed: {err:#}");
+            return ExitCode::from(3);
+        }
+    };
+    let count = report.findings.len();
+    match baseline::Baseline::write(&args.output, &report.findings) {
+        Ok(()) => {
+            println!(
+                "snoot: wrote baseline with {count} finding{} to {}",
+                if count == 1 { "" } else { "s" },
+                args.output.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("snoot: cannot write baseline: {err:#}");
+            ExitCode::from(3)
+        }
+    }
 }
 
 fn cmd_rules() -> ExitCode {
