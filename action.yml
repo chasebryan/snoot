@@ -1,0 +1,61 @@
+# snoot GitHub Action — scan for classical public-key crypto, upload SARIF.
+#
+# Usage:
+#   - uses: chasebryan/snoot@main
+#     with:
+#       path: ./myapp
+#       fail-on: high
+#
+# Installs via `cargo install --git` (prebuilt binaries land with the week-6
+# release workflow; then this switches to a download). Requires a Rust
+# toolchain on the runner — github-hosted ubuntu-latest ships one, or add
+# dtolnay/rust-toolchain@stable before this step.
+
+name: "snoot PQC scan"
+description: "Scan for classical public-key cryptography (RSA/ECDSA/DH) and upload SARIF to code scanning"
+author: "Chase Bryan"
+
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  path:
+    description: "Path to scan, relative to the repository root"
+    required: false
+    default: "."
+  fail-on:
+    description: "Minimum finding severity that fails the run (critical|high|medium|low|info)"
+    required: false
+    default: "high"
+  exclude:
+    description: "Comma-separated glob patterns to skip, relative to the scan root (e.g. 'tests/fixtures/**')"
+    required: false
+    default: ""
+  upload-sarif:
+    description: "Upload SARIF results to GitHub code scanning"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install snoot
+      shell: bash
+      run: cargo install --git https://github.com/chasebryan/snoot --locked
+
+    - name: Scan for classical crypto
+      shell: bash
+      run: |
+        ARGS=("--format" "sarif" "--output" "snoot.sarif" "--fail-on" "${{ inputs.fail-on }}")
+        if [ -n "${{ inputs.exclude }}" ]; then
+          ARGS+=("--exclude" "${{ inputs.exclude }}")
+        fi
+        snoot scan "${{ inputs.path }}" "${ARGS[@]}"
+
+    - name: Upload SARIF to code scanning
+      if: ${{ inputs.upload-sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: snoot.sarif
+        category: snoot
