@@ -84,6 +84,33 @@ fn scan_help_mentions_formats() {
 }
 
 #[test]
+fn repo_self_scan_is_clean() {
+    // DESIGN.md §10: snoot scan on its own repo must be clean.
+    // Fixture corpus is excluded via .snootignore.
+    let root = env!("CARGO_MANIFEST_DIR");
+    let out = snoot()
+        .arg("scan")
+        .arg(root)
+        .arg("--format")
+        .arg("json")
+        .arg("--quiet")
+        .output()
+        .expect("self-scan");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let findings = doc["findings"].as_array().unwrap();
+    assert!(
+        findings.is_empty(),
+        "self-scan must be clean, got: {findings:?}"
+    );
+}
+
+#[test]
 fn init_and_baseline_suppress_findings() {
     let dir = std::env::temp_dir().join("snoot-smoke-baseline");
     let _ = std::fs::remove_dir_all(&dir);

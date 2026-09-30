@@ -1,10 +1,10 @@
 //! Scan orchestration: walk the tree, dispatch per-file engines, collect findings.
 //!
-//! The scanner itself owns no detection logic — it walks files with `walkdir`,
-//! asks each engine whether a file is in scope (`Engine::file_matches`), and
-//! aggregates the findings. Code (Rust/Python) and PKCS#1 RSA PEM detection
-//! are live; manifest and TLS engines still stub (week 3).
+//! The scanner walks files with `walkdir`, honors `.snootignore`, asks each
+//! engine whether a file is in scope, dedupes by fingerprint, and applies an
+//! optional baseline.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -12,6 +12,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::engines::{CodeEngine, Engine, ManifestEngine, SecretsEngine, TlsConfEngine};
+use crate::ignore::{self, IgnoreList};
 use crate::model::Finding;
 
 /// Options controlling a scan.
@@ -70,6 +71,7 @@ const SKIP_DIRS: &[&str] = &[
 /// the collected findings sorted by severity (descending), then path.
 pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
     let started = Instant::now();
+    let ignore = IgnoreList::load_from_root(&opts.root);
 
     let engines: Vec<Box<dyn Engine>> = vec![
         Box::new(CodeEngine),
@@ -82,14 +84,21 @@ pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
     let mut files_scanned: u64 = 0;
     let mut files_skipped: u64 = 0;
 
+    let root = opts.root.clone();
     let walker = walkdir::WalkDir::new(&opts.root)
         .follow_links(false)
         .into_iter()
         .filter_entry(|entry| {
-            // Prune skipped directories before descending into them.
             if entry.file_type().is_dir() {
                 if let Some(name) = entry.file_name().to_str() {
-                    return !SKIP_DIRS.contains(&name);
+                    if SKIP_DIRS.contains(&name) {
+                        return false;
+                    }
+                }
+                let rel = ignore::rel_path(&root, entry.path());
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                if ignore.ignores_dir(&rel_str) {
+                    return false;
                 }
             }
             true
@@ -107,6 +116,12 @@ pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
             continue;
         }
         let path = entry.path();
+        let rel = ignore::rel_path(&opts.root, path);
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        if ignore.ignores(&rel_str) {
+            files_skipped += 1;
+            continue;
+        }
 
         let content = match std::fs::read(path) {
             Ok(bytes) => bytes,
@@ -132,6 +147,10 @@ pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
             }
         }
     }
+
+    // Dedupe identical fingerprints (multiple queries can hit one call site).
+    let mut seen = HashSet::new();
+    findings.retain(|f| seen.insert(f.fingerprint.clone()));
 
     // Apply baseline suppression when requested.
     if let Some(baseline_path) = &opts.baseline {
@@ -165,7 +184,6 @@ pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
 
 /// Relativize `path` against the scan root for display, falling back to the
 /// full path. Context helper used by reporters.
-// Week-1 API surface: consumed by reporters starting week 2.
 #[allow(dead_code)]
 pub fn display_path(root: &PathBuf, path: &str) -> String {
     PathBuf::from(path)

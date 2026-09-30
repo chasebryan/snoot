@@ -7,6 +7,7 @@
 
 mod baseline;
 mod engines;
+mod ignore;
 mod model;
 mod reporters;
 mod rules;

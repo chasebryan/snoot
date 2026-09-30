@@ -12,21 +12,26 @@ use crate::rules::RuleRegistry;
 
 pub struct SecretsEngine;
 
-/// (armor substring, rule id, evidence detail)
+/// Full PEM armor lines (must begin the trimmed line — avoids self-hits on
+/// detector source that merely mentions these labels in strings/comments).
 const PEM_PRIVATE_RULES: &[(&str, &str, &str)] = &[
     (
-        "BEGIN RSA PRIVATE KEY",
+        "-----BEGIN RSA PRIVATE KEY-----",
         "SNOOT003",
         "RSA PRIVATE KEY (PKCS#1 PEM)",
     ),
     (
-        "BEGIN EC PRIVATE KEY",
+        "-----BEGIN EC PRIVATE KEY-----",
         "SNOOT009",
         "EC PRIVATE KEY (SEC1 PEM)",
     ),
-    ("BEGIN DSA PRIVATE KEY", "SNOOT010", "DSA PRIVATE KEY (PEM)"),
     (
-        "BEGIN PRIVATE KEY",
+        "-----BEGIN DSA PRIVATE KEY-----",
+        "SNOOT010",
+        "DSA PRIVATE KEY (PEM)",
+    ),
+    (
+        "-----BEGIN PRIVATE KEY-----",
         "SNOOT010",
         "PRIVATE KEY (PKCS#8 PEM — classical until proven otherwise)",
     ),
@@ -85,32 +90,22 @@ impl Engine for SecretsEngine {
         let mut findings = Vec::new();
 
         for (idx, line) in text.lines().enumerate() {
+            let trimmed = line.trim();
             // Prefer the most specific armor match (RSA/EC/DSA before generic).
             let mut matched: Option<(&str, &str)> = None;
             for (armor, rule_id, detail) in PEM_PRIVATE_RULES {
-                if line.contains(armor) {
-                    // Avoid double-firing: "BEGIN RSA PRIVATE KEY" also contains
-                    // "BEGIN" + "PRIVATE KEY" but not the exact generic label.
-                    if *armor == "BEGIN PRIVATE KEY"
-                        && (line.contains("RSA PRIVATE KEY")
-                            || line.contains("EC PRIVATE KEY")
-                            || line.contains("DSA PRIVATE KEY")
-                            || line.contains("ENCRYPTED PRIVATE KEY"))
-                    {
-                        continue;
-                    }
+                if trimmed.starts_with(armor) {
                     matched = Some((rule_id, detail));
                     break;
                 }
             }
             if let Some((rule_id, detail)) = matched {
                 if let Some(rule) = RuleRegistry::by_id(rule_id) {
-                    let snippet = line.trim().to_string();
                     findings.push(Finding::new(
                         &rule,
                         path_str.clone(),
                         Some((idx + 1) as u32),
-                        Some(snippet),
+                        Some(trimmed.to_string()),
                         Evidence {
                             kind: "pem_block".to_string(),
                             detail: detail.to_string(),
@@ -120,13 +115,13 @@ impl Engine for SecretsEngine {
             }
 
             // Classical X.509 cert inventory (info).
-            if line.contains("BEGIN CERTIFICATE") {
+            if trimmed.starts_with("-----BEGIN CERTIFICATE-----") {
                 if let Some(rule) = RuleRegistry::by_id("SNOOT020") {
                     findings.push(Finding::new(
                         &rule,
                         path_str.clone(),
                         Some((idx + 1) as u32),
-                        Some(line.trim().to_string()),
+                        Some(trimmed.to_string()),
                         Evidence {
                             kind: "pem_block".to_string(),
                             detail:
@@ -138,26 +133,40 @@ impl Engine for SecretsEngine {
             }
         }
 
-        // JWK private keys: `"kty":"RSA"|"EC"` plus a private-field `"d":`.
-        findings.extend(scan_jwk_private(path, text));
+        // JWK private keys — only in data files; source that embeds example
+        // JWKs in string literals is out of scope for this heuristic.
+        if jwk_file(path) {
+            findings.extend(scan_jwk_private(path, text));
+        }
 
         findings
     }
 }
 
+fn jwk_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("json" | "jwk" | "yml" | "yaml" | "txt")
+    )
+}
+
 fn scan_jwk_private(path: &Path, text: &str) -> Vec<Finding> {
-    let lower = text.to_ascii_lowercase().replace(' ', "");
-    // Private JWKs carry a "d" parameter (RSA/EC private exponent / ECC private).
-    if !lower.contains("\"d\":\"") {
+    let lower = text
+        .to_ascii_lowercase()
+        .replace([' ', '\n', '\r', '\t'], "");
+    // Require a private field plus a classical public component so comments
+    // that merely mention kty/d do not fire.
+    let has_d = lower.contains("\"d\":\"");
+    let is_rsa = lower.contains("\"kty\":\"rsa\"") && lower.contains("\"n\":\"");
+    let is_ec = lower.contains("\"kty\":\"ec\"") && lower.contains("\"x\":\"");
+    if !has_d || !(is_rsa || is_ec) {
         return Vec::new();
     }
 
-    let (rule_id, detail) = if lower.contains("\"kty\":\"rsa\"") {
+    let (rule_id, detail) = if is_rsa {
         ("SNOOT017", "JWK RSA private key (kty=RSA with d)")
-    } else if lower.contains("\"kty\":\"ec\"") {
-        ("SNOOT017", "JWK EC private key (kty=EC with d)")
     } else {
-        return Vec::new();
+        ("SNOOT017", "JWK EC private key (kty=EC with d)")
     };
 
     let Some(rule) = RuleRegistry::by_id(rule_id) else {

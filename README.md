@@ -26,8 +26,13 @@ cargo install --path .   # or: cargo run --
 
 snoot scan ./myapp
 snoot scan ./myapp --format sarif --output results.sarif --fail-on high
+snoot init ./myapp       # write .snoot-baseline.json from current findings
 snoot rules              # list detection rules
 ```
+
+Optional `{repo}/.snootignore` excludes paths (gitignore-style). This repo
+ignores `tests/fixtures/` so self-scans stay clean while the accuracy gate
+still scans that tree explicitly.
 
 ## Why
 

@@ -51,22 +51,26 @@ impl Engine for TlsConfEngine {
     }
 
     fn file_matches(&self, path: &Path) -> bool {
+        let ext = path.extension().and_then(|e| e.to_str());
+        let is_config_ext = matches!(ext, Some("conf" | "cnf" | "cfg" | "ini" | "yml" | "yaml"));
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             let lower = name.to_ascii_lowercase();
-            if lower == "caddyfile"
-                || lower.contains("nginx")
-                || lower.contains("apache")
-                || lower.contains("httpd")
-                || lower.contains("ssl")
-                || lower.contains("tls")
+            if lower == "caddyfile" {
+                return true;
+            }
+            // Name hints only count for config-like files — never for
+            // `tlsconf.rs` / `ssl.rs` source that merely implements detection.
+            if is_config_ext
+                && (lower.contains("nginx")
+                    || lower.contains("apache")
+                    || lower.contains("httpd")
+                    || lower.contains("ssl")
+                    || lower.contains("tls"))
             {
                 return true;
             }
         }
-        matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("conf" | "cnf" | "cfg" | "ini")
-        )
+        matches!(ext, Some("conf" | "cnf" | "cfg" | "ini"))
     }
 
     fn scan(&self, path: &Path, content: &[u8]) -> Vec<Finding> {
