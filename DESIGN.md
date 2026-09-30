@@ -222,21 +222,28 @@ This is the differentiator against the toy scanners. v1 ships with:
   limitations. GitHub Action + SARIF upload working end-to-end.- **Week 6**: Docs (README with HNDL story + CNSA 2.0 table + pqc-scan
   comparison), release workflow, crates.io publish, announcement.
 
-**Status as of 2026-09-30 (week 5, done)** — week 5 pulled forward: `--exclude`
-(glob, repeatable + comma-separated) added to `scan` and `init` so self-scans
-skip `tests/fixtures/`; `docs/accuracy.md` publishes the real-world
-validation (paramiko 15, golang-jwt 14, libtomcrypt 131 findings, zero false
-positives — method, per-rule precision notes, and what validation doesn't
-prove); README gained the HNDL story, a deadline table (UK NCSC 2028–2035,
-US federal 2030, CNSA 2.0 2031, EU 2026–2035), and expanded honest
-limitations (obfuscated code, dynamic loading, PKCS#12/DSA blind spots,
-unmeasured recall); SNOOT003/009 retitled "RSA/EC private key material"
-(they fire on DER/JWK too); `action.yml` composite action installs via
-`cargo install --git` and uploads SARIF to code scanning (validated locally;
-prebuilt binaries land with the release workflow); self-scan gate enabled in
-CI (`scan . --exclude 'tests/fixtures/**' --fail-on medium`) and green —
-snoot is clean on its own repo. Remaining: release workflow, crates.io
-publish, announcement (week 6).
+**Status as of 2026-09-30 (week 6, done — v1 release-ready)** — release prep
+complete, nothing published (all publishing steps are manual, per the
+maintainer's constraint): `cargo publish --dry-run` clean, `cargo doc`
+warning-free (fixed two rustdoc intra-doc-link warnings in
+`src/engines/manifest.rs`), Cargo.toml metadata audited (description,
+keywords, categories, repository, readme, license = AGPL-3.0-only — all
+correct); stale C/C++ "not yet wired" comment removed (they've been wired
+since week 3). `docs/RELEASE_CHECKLIST.md` written — ordered,
+copy-pasteable manual steps: web-UI upload of `assets/banner.jpg`,
+`.github/workflows/ci.yml`, `.github/workflows/release.yml` (app lacks
+Workflows permission), `cargo login` + `cargo publish`, tag push
+(`v*` triggers the release workflow), draft-release review, smoke test.
+`.github/workflows/release.yml` builds 5 targets (linux x86_64/aarch64,
+macOS aarch64/x86_64, Windows x86_64) and opens a draft GitHub release
+with archives attached; YAML validated locally (5 targets, actions
+pinned, draft: true). `docs/accuracy.md` gained "How snoot compares"
+(pqctl, pqc-scan, pqcanalyzer — factual, scope/accuracy/outputs
+differences, no trash-talk). `docs/ANNOUNCEMENT_DRAFT.md` written, terse,
+not posted. Final gate: 59 unit + 7 CLI tests green, clippy `-D warnings`
+clean, fmt clean, `cargo build --release` compiles (LTO, ~1m36s);
+release binary self-scan (`--exclude tests/fixtures/** --fail-on medium`)
+clean. v1 scope from the six-week plan is done.
 
 ## 14. Open questions
 
