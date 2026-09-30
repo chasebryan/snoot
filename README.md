@@ -54,4 +54,4 @@ what orange can verify or replace.
 
 ## License
 
-MIT — see LICENSE (in the [snoot repo](https://github.com/chasebryan/snoot)).
+GNU AGPLv3 — see LICENSE (in the [snoot repo](https://github.com/chasebryan/snoot)).
