@@ -93,11 +93,31 @@ impl RuleRegistry {
                         js_member("javascript", "crypto", "generateKeyPair"),
                         js_member("javascript", "crypto", "generateKeyPairSync"),
                         q(
+                            "javascript",
+                            "(new_expression\n  constructor: (identifier) @_c\n  (#eq? @_c \"NodeRSA\"))",
+                        ),
+                        q(
+                            "javascript",
+                            "(call_expression\n  function: (member_expression\n    property: (property_identifier) @_fn)\n  (#eq? @_fn \"generateKeyPair\"))",
+                        ),
+                        q(
                             "typescript",
                             "(call_expression\n  function: (identifier) @_fn\n  (#eq? @_fn \"generateKeyPairSync\"))",
                         ),
+                        q(
+                            "typescript",
+                            "(call_expression\n  function: (identifier) @_fn\n  (#eq? @_fn \"generateKeyPair\"))",
+                        ),
                         js_member("typescript", "crypto", "generateKeyPair"),
                         js_member("typescript", "crypto", "generateKeyPairSync"),
+                        q(
+                            "typescript",
+                            "(new_expression\n  constructor: (identifier) @_c\n  (#eq? @_c \"NodeRSA\"))",
+                        ),
+                        q(
+                            "typescript",
+                            "(call_expression\n  function: (member_expression\n    property: (property_identifier) @_fn)\n  (#eq? @_fn \"generateKeyPair\"))",
+                        ),
                         q(
                             "java",
                             "(method_invocation\n  object: (identifier) @_obj\n  name: (identifier) @_fn\n  arguments: (argument_list (string_literal (string_fragment) @_alg))\n  (#eq? @_obj \"KeyPairGenerator\")\n  (#eq? @_fn \"getInstance\")\n  (#eq? @_alg \"RSA\"))",
@@ -407,6 +427,14 @@ impl RuleRegistry {
                     go_call("rsa", "EncryptOAEP"),
                     go_call("rsa", "DecryptPKCS1v15"),
                     go_call("rsa", "DecryptOAEP"),
+                    js_member("javascript", "crypto", "privateEncrypt"),
+                    js_member("javascript", "crypto", "publicEncrypt"),
+                    js_member("javascript", "crypto", "privateDecrypt"),
+                    js_member("javascript", "crypto", "publicDecrypt"),
+                    js_member("typescript", "crypto", "privateEncrypt"),
+                    js_member("typescript", "crypto", "publicEncrypt"),
+                    js_member("typescript", "crypto", "privateDecrypt"),
+                    js_member("typescript", "crypto", "publicDecrypt"),
                     c_call("c", "RSA_public_encrypt"),
                     c_call("c", "RSA_private_decrypt"),
                     c_call("cpp", "RSA_public_encrypt"),
