@@ -1,10 +1,11 @@
 //! Secrets engine: PEM / DER / JWK / key-material scanning + key-size extraction.
 //!
-//! **Status**: week-2. PKCS#1 RSA/EC/DSA PEM armor and generic PKCS#8
-//! `PRIVATE KEY` blocks are detected. Full ASN.1 key-size extraction and JWK
-//! parsing still land later.
+//! Detects classical private-key PEM armor and JWKs. For PKCS#1 RSA PEMs,
+//! decodes the DER body and reads the modulus INTEGER to report key size.
 
 use std::path::Path;
+
+use base64::Engine as _;
 
 use crate::engines::Engine;
 use crate::model::{Evidence, Finding};
@@ -87,11 +88,11 @@ impl Engine for SecretsEngine {
         };
 
         let path_str = path.to_string_lossy().replace('\\', "/");
+        let lines: Vec<&str> = text.lines().collect();
         let mut findings = Vec::new();
-
-        for (idx, line) in text.lines().enumerate() {
-            let trimmed = line.trim();
-            // Prefer the most specific armor match (RSA/EC/DSA before generic).
+        let mut i = 0;
+        while i < lines.len() {
+            let trimmed = lines[i].trim();
             let mut matched: Option<(&str, &str)> = None;
             for (armor, rule_id, detail) in PEM_PRIVATE_RULES {
                 if trimmed.starts_with(armor) {
@@ -99,28 +100,42 @@ impl Engine for SecretsEngine {
                     break;
                 }
             }
+
             if let Some((rule_id, detail)) = matched {
+                let end_tag = trimmed.replacen("BEGIN", "END", 1);
+                let mut j = i + 1;
+                while j < lines.len() && !lines[j].trim().starts_with(&end_tag) {
+                    j += 1;
+                }
+                let body_lines = &lines[i + 1..j.min(lines.len())];
+                let mut detail = detail.to_string();
+                if rule_id == "SNOOT003" {
+                    if let Some(bits) = rsa_pkcs1_modulus_bits(body_lines) {
+                        detail = format!("{detail}, {bits}-bit");
+                    }
+                }
                 if let Some(rule) = RuleRegistry::by_id(rule_id) {
                     findings.push(Finding::new(
                         &rule,
                         path_str.clone(),
-                        Some((idx + 1) as u32),
+                        Some((i + 1) as u32),
                         Some(trimmed.to_string()),
                         Evidence {
                             kind: "pem_block".to_string(),
-                            detail: detail.to_string(),
+                            detail,
                         },
                     ));
                 }
+                i = j.saturating_add(1);
+                continue;
             }
 
-            // Classical X.509 cert inventory (info).
             if trimmed.starts_with("-----BEGIN CERTIFICATE-----") {
                 if let Some(rule) = RuleRegistry::by_id("SNOOT020") {
                     findings.push(Finding::new(
                         &rule,
                         path_str.clone(),
-                        Some((idx + 1) as u32),
+                        Some((i + 1) as u32),
                         Some(trimmed.to_string()),
                         Evidence {
                             kind: "pem_block".to_string(),
@@ -131,10 +146,9 @@ impl Engine for SecretsEngine {
                     ));
                 }
             }
+            i += 1;
         }
 
-        // JWK private keys — only in data files; source that embeds example
-        // JWKs in string literals is out of scope for this heuristic.
         if jwk_file(path) {
             findings.extend(scan_jwk_private(path, text));
         }
@@ -154,8 +168,6 @@ fn scan_jwk_private(path: &Path, text: &str) -> Vec<Finding> {
     let lower = text
         .to_ascii_lowercase()
         .replace([' ', '\n', '\r', '\t'], "");
-    // Require a private field plus a classical public component so comments
-    // that merely mention kty/d do not fire.
     let has_d = lower.contains("\"d\":\"");
     let is_rsa = lower.contains("\"kty\":\"rsa\"") && lower.contains("\"n\":\"");
     let is_ec = lower.contains("\"kty\":\"ec\"") && lower.contains("\"x\":\"");
@@ -163,17 +175,21 @@ fn scan_jwk_private(path: &Path, text: &str) -> Vec<Finding> {
         return Vec::new();
     }
 
-    let (rule_id, detail) = if is_rsa {
-        ("SNOOT017", "JWK RSA private key (kty=RSA with d)")
+    let mut detail = if is_rsa {
+        "JWK RSA private key (kty=RSA with d)".to_string()
     } else {
-        ("SNOOT017", "JWK EC private key (kty=EC with d)")
+        "JWK EC private key (kty=EC with d)".to_string()
     };
+    if is_rsa {
+        if let Some(bits) = jwk_rsa_modulus_bits(&lower) {
+            detail = format!("{detail}, ~{bits}-bit");
+        }
+    }
 
-    let Some(rule) = RuleRegistry::by_id(rule_id) else {
+    let Some(rule) = RuleRegistry::by_id("SNOOT017") else {
         return Vec::new();
     };
 
-    // Locate the first kty line for a useful location.
     let mut line_no = None;
     let mut snippet = None;
     for (idx, line) in text.lines().enumerate() {
@@ -192,9 +208,95 @@ fn scan_jwk_private(path: &Path, text: &str) -> Vec<Finding> {
         snippet,
         Evidence {
             kind: "jwk".to_string(),
-            detail: detail.to_string(),
+            detail,
         },
     )]
+}
+
+/// Approximate RSA modulus bit length from a base64url JWK `n` value.
+fn jwk_rsa_modulus_bits(compact_lower: &str) -> Option<u32> {
+    let key = "\"n\":\"";
+    let start = compact_lower.find(key)? + key.len();
+    let end = compact_lower[start..].find('"')? + start;
+    let n_b64 = &compact_lower[start..end];
+    let n_b64 = n_b64.replace('-', "+").replace('_', "/");
+    // pad
+    let pad = (4 - n_b64.len() % 4) % 4;
+    let n_b64 = format!("{n_b64}{}", "=".repeat(pad));
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(n_b64)
+        .ok()?;
+    Some(bytes.len() as u32 * 8)
+}
+
+/// Decode PKCS#1 RSAPrivateKey PEM body and return modulus bit length.
+fn rsa_pkcs1_modulus_bits(body_lines: &[&str]) -> Option<u32> {
+    let b64: String = body_lines
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('-'))
+        .collect();
+    if b64.is_empty() || b64.contains("...") {
+        // Truncated fixture bodies — skip size extraction.
+        return None;
+    }
+    let der = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    der_rsa_modulus_bits(&der)
+}
+
+/// Walk a DER-encoded RSAPrivateKey SEQUENCE and read the modulus INTEGER.
+fn der_rsa_modulus_bits(der: &[u8]) -> Option<u32> {
+    let mut i = 0usize;
+    if *der.get(i)? != 0x30 {
+        return None;
+    }
+    i += 1;
+    let (_, next) = der_read_len(der, i)?;
+    i = next;
+    // version INTEGER
+    i = der_skip_tlv(der, i)?;
+    // modulus INTEGER
+    if *der.get(i)? != 0x02 {
+        return None;
+    }
+    i += 1;
+    let (len, next) = der_read_len(der, i)?;
+    let modulus = der.get(next..next + len)?;
+    Some(integer_bit_length(modulus))
+}
+
+fn integer_bit_length(bytes: &[u8]) -> u32 {
+    let mut bytes = bytes;
+    while bytes.first() == Some(&0) && bytes.len() > 1 {
+        bytes = &bytes[1..];
+    }
+    if bytes.is_empty() {
+        return 0;
+    }
+    let leading = bytes[0].leading_zeros();
+    (bytes.len() as u32) * 8 - leading
+}
+
+fn der_read_len(data: &[u8], i: usize) -> Option<(usize, usize)> {
+    let first = *data.get(i)?;
+    if first & 0x80 == 0 {
+        return Some((first as usize, i + 1));
+    }
+    let n = (first & 0x7f) as usize;
+    if n == 0 || n > 4 {
+        return None;
+    }
+    let mut len = 0usize;
+    for b in data.get(i + 1..i + 1 + n)? {
+        len = (len << 8) | (*b as usize);
+    }
+    Some((len, i + 1 + n))
+}
+
+fn der_skip_tlv(data: &[u8], i: usize) -> Option<usize> {
+    let _tag = data.get(i)?;
+    let (len, next) = der_read_len(data, i + 1)?;
+    Some(next + len)
 }
 
 #[cfg(test)]
@@ -209,6 +311,31 @@ mod tests {
         let findings = SecretsEngine.scan(&path, src);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].rule_id, "SNOOT003");
+    }
+
+    #[test]
+    fn extracts_rsa_2048_bit_size() {
+        let pem = include_str!("../../tests/fixtures/positive/secrets/rsa2048.key");
+        let path = PathBuf::from("secrets/rsa2048.key");
+        let findings = SecretsEngine.scan(&path, pem.as_bytes());
+        assert_eq!(findings[0].rule_id, "SNOOT003");
+        assert!(
+            findings[0].evidence.detail.contains("2048-bit"),
+            "{}",
+            findings[0].evidence.detail
+        );
+    }
+
+    #[test]
+    fn extracts_rsa_512_bit_size() {
+        let pem = include_str!("../../tests/fixtures/positive/secrets/rsa512.key");
+        let path = PathBuf::from("secrets/rsa512.key");
+        let findings = SecretsEngine.scan(&path, pem.as_bytes());
+        assert!(
+            findings[0].evidence.detail.contains("512-bit"),
+            "{}",
+            findings[0].evidence.detail
+        );
     }
 
     #[test]
@@ -245,5 +372,11 @@ mod tests {
             b"-----BEGIN PUBLIC KEY-----\nMFwwDQYJKoZIhvcNAQEBBQAD...\n-----END PUBLIC KEY-----\n";
         let findings = SecretsEngine.scan(&path, src);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn integer_bit_length_strips_leading_zero() {
+        assert_eq!(integer_bit_length(&[0x00, 0x80]), 8);
+        assert_eq!(integer_bit_length(&[0x01]), 1);
     }
 }

@@ -44,6 +44,16 @@ with the same first step: **cryptographic discovery** — inventory where your
 classical crypto lives. Most organizations can't do it. snoot is the
 developer-native, open-source tool for that first step.
 
+### CNSA 2.0 → snoot mapping (cheat sheet)
+
+| Classical find | CNSA 2.0 / NIST target | snoot rules |
+|----------------|------------------------|-------------|
+| RSA encrypt / key exchange | ML-KEM (FIPS 203), hybrid during transition | SNOOT001, SNOOT011, SNOOT003 |
+| ECDSA / RSA signatures | ML-DSA (FIPS 204) | SNOOT002, SNOOT008 |
+| ECDH / X25519 | ML-KEM hybrid (X25519MLKEM768) | SNOOT006, SNOOT005 |
+| DSA / weak DH | Retire → ML-DSA / ML-KEM | SNOOT004, SNOOT007 |
+| Ed25519 | Plan ML-DSA (inventory) | SNOOT014 |
+
 ## Pipeline
 
 **snoot discovers → [orange](https://github.com/chasebryan/orange) verifies →

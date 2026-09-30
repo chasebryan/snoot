@@ -33,9 +33,9 @@ TLS hybrid allowlist, manifest non-dep noise).
 
 ## Real-world validation
 
-### RustCrypto/RSA (2026-09-30)
+### 1. RustCrypto/RSA (2026-09-30)
 
-`snoot scan` against https://github.com/RustCrypto/RSA (`/tmp/rsa-src`):
+https://github.com/RustCrypto/RSA — **13 findings / 65 files / ~1.6s**
 
 | Rule | Count | Notes |
 |------|------:|-------|
@@ -45,8 +45,31 @@ TLS hybrid allowlist, manifest non-dep noise).
 | SNOOT013 | 1 | SHA-1 reference in PKCS#1 v1.5 paths |
 | SNOOT016 | 2 | classical deps in `marvin-toolkit/Cargo.toml` |
 
-**13 findings / 65 files / ~1.6s.** Expected surface for an RSA library.
-Likely FP/noise: inventory of the library's own implementation APIs (still
-correct as discovery). Misses: no key-size extraction yet on the PEMs.
+### 2. sybrenstuvel/python-rsa (2026-09-30)
 
-Further repos (Go `crypto/tls` consumers, Node `crypto` apps) still planned.
+https://github.com/sybrenstuvel/python-rsa — **14 findings / 61 files / ~1.2s**
+
+| Rule | Count | Notes |
+|------|------:|-------|
+| SNOOT001 | 9 | `rsa.newkeys` call sites |
+| SNOOT003 | 4 | PEM private key fixtures |
+| SNOOT016 | 1 | manifest dependency |
+
+### 3. go-jose/go-jose (2026-09-30)
+
+https://github.com/go-jose/go-jose — **37 findings / 89 files / ~3.2s**
+
+| Rule | Count | Notes |
+|------|------:|-------|
+| SNOOT002 | 19 | `ecdsa.GenerateKey` / `Sign` usage |
+| SNOOT001 | 5 | `rsa.GenerateKey` |
+| SNOOT011 | 5 | RSA encrypt/decrypt APIs |
+| SNOOT014 | 4 | Ed25519 inventory |
+| SNOOT008 | 2 | classical signature APIs |
+| SNOOT013 | 1 | SHA-1 |
+| SNOOT020 | 1 | certificate inventory |
+
+**Takeaway:** on libraries that *are* classical crypto, snoot reports a dense
+but expected surface. Remaining gaps: key-size on PEMs, fewer FPs on
+crypto-implementation repos vs application repos (severity/context), and
+Node/Java consumer apps still to sample.

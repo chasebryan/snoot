@@ -37,16 +37,21 @@ pub fn render(report: &ScanReport) -> String {
         .iter()
         .map(|f| {
             let (primitive, purpose) = primitive_for(&f.rule_id);
+            let param = key_size_from_detail(&f.evidence.detail);
+            let mut alg = json!({
+                "primitive": primitive,
+                "executionEnvironment": "local",
+                "purpose": purpose,
+            });
+            if let Some(bits) = param {
+                alg["parameterSetIdentifier"] = json!(format!("{bits}"));
+            }
             json!({
                 "type": "cryptographic-asset",
                 "name": f.title,
                 "cryptoProperties": {
                     "assetType": "algorithm",
-                    "algorithmProperties": {
-                        "primitive": primitive,
-                        "executionEnvironment": "local",
-                        "purpose": purpose,
-                    },
+                    "algorithmProperties": alg,
                 },
                 "evidence": {
                     "occurrences": [{
