@@ -29,33 +29,31 @@ const MANIFEST_FILES: &[&str] = &[
 ];
 
 /// Known classical-crypto packages → short note for evidence.
-/// Matching is substring-on-line / JSON-key style; keep names distinctive.
+/// Package names must be unique; matching is ecosystem-aware via file type.
 const CLASSICAL_PACKAGES: &[(&str, &str)] = &[
-    // Rust
-    ("rsa", "Rust `rsa` crate — classical RSA"),
-    ("p256", "Rust `p256` — ECDSA/ECDH P-256"),
-    ("p384", "Rust `p384` — ECDSA/ECDH P-384"),
-    ("ecdsa", "Rust/generic ECDSA crate"),
+    // Shared short names (Rust crates / Python packages / etc.)
+    ("rsa", "classical RSA library"),
+    ("ecdsa", "classical ECDSA library"),
+    ("p256", "ECDSA/ECDH P-256"),
+    ("p384", "ECDSA/ECDH P-384"),
     ("x25519-dalek", "X25519 key exchange"),
     ("ed25519-dalek", "Ed25519 signatures (inventory)"),
     ("openssl", "OpenSSL bindings — classical defaults"),
     ("ring", "ring — classical RSA/ECDSA/ECDH"),
-    ("rustls", "rustls — classical TLS stacks without PQC"),
+    ("rustls", "rustls — classical TLS without PQC"),
     // JS
     ("node-forge", "node-forge — classical RSA/ECDSA"),
     ("node-rsa", "node-rsa — classical RSA"),
     ("jsrsasign", "jsrsasign — classical RSA/ECDSA"),
     ("crypto-js", "crypto-js — legacy crypto helpers"),
-    // Python
+    // Python-specific names
     ("pycryptodome", "PyCryptodome — classical RSA/ECDSA/DSA"),
     ("pycrypto", "PyCrypto — classical RSA/DSA (unmaintained)"),
-    ("rsa", "Python `rsa` package — classical RSA"),
-    ("ecdsa", "Python `ecdsa` — classical ECDSA"),
     (
         "cryptography",
         "cryptography — classical public-key APIs common",
     ),
-    // Go module paths matched as substrings in go.mod
+    // Go module paths
     ("golang.org/x/crypto", "x/crypto — classical helpers"),
 ];
 

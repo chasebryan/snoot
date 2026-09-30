@@ -550,6 +550,81 @@ impl RuleRegistry {
                 cwe: None,
                 orange_note: None,
             },
+            Rule {
+                id: "SNOOT017".to_string(),
+                title: "Classical private key in JWK".to_string(),
+                severity: Severity::Critical,
+                description: "A JSON Web Key with classical kty (RSA/EC) and a \
+                    private field (d) was found in the source tree."
+                    .to_string(),
+                remediation: "Remove the JWK from source control, rotate the key, \
+                    and store replacements in a KMS/HSM. Prefer ML-KEM / ML-DSA."
+                    .to_string(),
+                queries: vec![],
+                cwe: Some("CWE-798".to_string()),
+                orange_note: None,
+            },
+            Rule {
+                id: "SNOOT018".to_string(),
+                title: "OpenSSL TLS context setup".to_string(),
+                severity: Severity::Medium,
+                description: "Application code creates an OpenSSL SSL/TLS context. \
+                    Without an explicit hybrid PQC group, connections negotiate \
+                    classical-only key exchange."
+                    .to_string(),
+                remediation: "Configure hybrid groups (X25519MLKEM768) on the \
+                    SSL_CTX / SSL_CTX_set1_groups_list, or migrate to a TLS stack \
+                    with PQC defaults."
+                    .to_string(),
+                queries: vec![
+                    c_call("c", "SSL_CTX_new"),
+                    c_call("cpp", "SSL_CTX_new"),
+                    c_call("c", "SSL_new"),
+                    c_call("cpp", "SSL_new"),
+                    go_call("tls", "Server"),
+                    go_call("tls", "Client"),
+                    go_call("tls", "Dial"),
+                ],
+                cwe: None,
+                orange_note: None,
+            },
+            Rule {
+                id: "SNOOT019".to_string(),
+                title: "RC4 usage".to_string(),
+                severity: Severity::Low,
+                description: "RC4 is a broken stream cipher. Hygiene flag during \
+                    crypto inventory."
+                    .to_string(),
+                remediation: "Replace RC4 with AES-256-GCM or ChaCha20-Poly1305."
+                    .to_string(),
+                queries: vec![
+                    c_call("c", "RC4"),
+                    c_call("c", "RC4_set_key"),
+                    c_call("cpp", "RC4"),
+                    c_call("cpp", "RC4_set_key"),
+                    q(
+                        "python",
+                        "(call\n  function: (attribute\n    object: (identifier) @_mod\n    attribute: (identifier) @_fn)\n  (#eq? @_mod \"ARC4\")\n  (#eq? @_fn \"new\"))",
+                    ),
+                ],
+                cwe: Some("CWE-327".to_string()),
+                orange_note: None,
+            },
+            Rule {
+                id: "SNOOT020".to_string(),
+                title: "X.509 certificate material (inventory)".to_string(),
+                severity: Severity::Info,
+                description: "An X.509 certificate PEM block was found. Treated as \
+                    inventory for the CBOM; algorithm/key-size extraction lands \
+                    with ASN.1 parsing."
+                    .to_string(),
+                remediation: "Inventory certificates and plan re-issuance with \
+                    PQC / hybrid algorithms as CAs and protocols allow."
+                    .to_string(),
+                queries: vec![],
+                cwe: None,
+                orange_note: None,
+            },
         ]
     }
 
@@ -570,9 +645,9 @@ mod tests {
     #[test]
     fn registry_has_week2_rules() {
         let rules = RuleRegistry::all();
-        assert_eq!(rules.len(), 16);
-        assert_eq!(RuleRegistry::count(), 16);
-        for i in 1..=16 {
+        assert_eq!(rules.len(), 20);
+        assert_eq!(RuleRegistry::count(), 20);
+        for i in 1..=20 {
             let id = format!("SNOOT{i:03}");
             assert!(RuleRegistry::by_id(&id).is_some(), "missing rule {id}");
         }
@@ -600,7 +675,9 @@ mod tests {
 
     #[test]
     fn pem_and_tls_rules_have_no_queries() {
-        for id in ["SNOOT003", "SNOOT005", "SNOOT009", "SNOOT010", "SNOOT016"] {
+        for id in [
+            "SNOOT003", "SNOOT005", "SNOOT009", "SNOOT010", "SNOOT016", "SNOOT017", "SNOOT020",
+        ] {
             let rule = RuleRegistry::by_id(id).unwrap();
             assert!(rule.queries.is_empty(), "{id} should be engine-driven");
         }

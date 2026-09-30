@@ -103,27 +103,89 @@ impl Engine for SecretsEngine {
                     break;
                 }
             }
-            let Some((rule_id, detail)) = matched else {
-                continue;
-            };
-            let Some(rule) = RuleRegistry::by_id(rule_id) else {
-                continue;
-            };
-            let snippet = line.trim().to_string();
-            findings.push(Finding::new(
-                &rule,
-                path_str.clone(),
-                Some((idx + 1) as u32),
-                Some(snippet),
-                Evidence {
-                    kind: "pem_block".to_string(),
-                    detail: detail.to_string(),
-                },
-            ));
+            if let Some((rule_id, detail)) = matched {
+                if let Some(rule) = RuleRegistry::by_id(rule_id) {
+                    let snippet = line.trim().to_string();
+                    findings.push(Finding::new(
+                        &rule,
+                        path_str.clone(),
+                        Some((idx + 1) as u32),
+                        Some(snippet),
+                        Evidence {
+                            kind: "pem_block".to_string(),
+                            detail: detail.to_string(),
+                        },
+                    ));
+                }
+            }
+
+            // Classical X.509 cert inventory (info).
+            if line.contains("BEGIN CERTIFICATE") {
+                if let Some(rule) = RuleRegistry::by_id("SNOOT020") {
+                    findings.push(Finding::new(
+                        &rule,
+                        path_str.clone(),
+                        Some((idx + 1) as u32),
+                        Some(line.trim().to_string()),
+                        Evidence {
+                            kind: "pem_block".to_string(),
+                            detail:
+                                "X.509 certificate PEM (classical algorithm assumed until parsed)"
+                                    .to_string(),
+                        },
+                    ));
+                }
+            }
         }
+
+        // JWK private keys: `"kty":"RSA"|"EC"` plus a private-field `"d":`.
+        findings.extend(scan_jwk_private(path, text));
 
         findings
     }
+}
+
+fn scan_jwk_private(path: &Path, text: &str) -> Vec<Finding> {
+    let lower = text.to_ascii_lowercase().replace(' ', "");
+    // Private JWKs carry a "d" parameter (RSA/EC private exponent / ECC private).
+    if !lower.contains("\"d\":\"") {
+        return Vec::new();
+    }
+
+    let (rule_id, detail) = if lower.contains("\"kty\":\"rsa\"") {
+        ("SNOOT017", "JWK RSA private key (kty=RSA with d)")
+    } else if lower.contains("\"kty\":\"ec\"") {
+        ("SNOOT017", "JWK EC private key (kty=EC with d)")
+    } else {
+        return Vec::new();
+    };
+
+    let Some(rule) = RuleRegistry::by_id(rule_id) else {
+        return Vec::new();
+    };
+
+    // Locate the first kty line for a useful location.
+    let mut line_no = None;
+    let mut snippet = None;
+    for (idx, line) in text.lines().enumerate() {
+        let l = line.to_ascii_lowercase();
+        if l.contains("\"kty\"") {
+            line_no = Some((idx + 1) as u32);
+            snippet = Some(line.trim().chars().take(120).collect());
+            break;
+        }
+    }
+
+    vec![Finding::new(
+        &rule,
+        path.to_string_lossy().replace('\\', "/"),
+        line_no,
+        snippet,
+        Evidence {
+            kind: "jwk".to_string(),
+            detail: detail.to_string(),
+        },
+    )]
 }
 
 #[cfg(test)]
@@ -154,6 +216,17 @@ mod tests {
         let src = b"-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBg...\n-----END PRIVATE KEY-----\n";
         let findings = SecretsEngine.scan(&path, src);
         assert_eq!(findings[0].rule_id, "SNOOT010");
+    }
+
+    #[test]
+    fn detects_rsa_jwk() {
+        let path = PathBuf::from("secrets/rsa.jwk");
+        let src = br#"{ "kty": "RSA", "n": "x", "e": "AQAB", "d": "y" }"#;
+        let findings = SecretsEngine.scan(&path, src);
+        assert!(
+            findings.iter().any(|f| f.rule_id == "SNOOT017"),
+            "{findings:?}"
+        );
     }
 
     #[test]

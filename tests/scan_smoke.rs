@@ -29,7 +29,7 @@ fn rules_lists_rule_ids() {
     let out = snoot().arg("rules").output().expect("run snoot rules");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    for i in 1..=16 {
+    for i in 1..=20 {
         let id = format!("SNOOT{i:03}");
         assert!(stdout.contains(&id), "rules output missing {id}");
     }

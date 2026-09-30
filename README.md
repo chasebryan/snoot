@@ -12,7 +12,7 @@ machine-readable evidence: SARIF (GitHub PR annotations), CycloneDX CBOM (the
 compliance artifact), and JSON.
 
 **Status: pre-alpha — week 2/3 of 6.** Tree-sitter detection is live for all six
-v1 languages (Rust, Python, Go, JS/TS, Java, C/C++), with 16 rules, PEM private
+v1 languages (Rust, Python, Go, JS/TS, Java, C/C++), with 20 rules, PEM private
 key detection, classical-only TLS flagging, direct-manifest crypto deps,
 baseline/`snoot init`, and a GitHub Action. Full ASN.1/JWK parsing and
 lockfile/transitive analysis are next. See [DESIGN.md](DESIGN.md). Nothing

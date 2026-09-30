@@ -49,7 +49,7 @@ fn positives_fire_expected_rules() {
 
     for expected in [
         "SNOOT001", "SNOOT002", "SNOOT003", "SNOOT004", "SNOOT005", "SNOOT006", "SNOOT007",
-        "SNOOT008", "SNOOT009", "SNOOT010", "SNOOT016",
+        "SNOOT008", "SNOOT009", "SNOOT010", "SNOOT016", "SNOOT017", "SNOOT018", "SNOOT020",
     ] {
         assert!(
             ids.iter().any(|id| id == expected),

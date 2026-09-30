@@ -7,15 +7,22 @@
 //! **Status**: week-2. All v1 languages are wired (Rust, Python, Go,
 //! JavaScript, TypeScript, Java, C, C++).
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 use crate::engines::Engine;
-use crate::model::{Evidence, Finding};
+use crate::model::{Evidence, Finding, Rule};
 use crate::rules::RuleRegistry;
 
 pub struct CodeEngine;
+
+struct LangBundle {
+    language: tree_sitter::Language,
+    queries: Vec<(Rule, Query)>,
+}
 
 impl Engine for CodeEngine {
     fn name(&self) -> &'static str {
@@ -30,12 +37,12 @@ impl Engine for CodeEngine {
         let Some(language) = language_id(path) else {
             return Vec::new();
         };
-        let Some(ts_language) = ts_language(language) else {
+        let Some(bundle) = bundle_for(language) else {
             return Vec::new();
         };
 
         let mut parser = Parser::new();
-        if parser.set_language(&ts_language).is_err() {
+        if parser.set_language(&bundle.language).is_err() {
             return Vec::new();
         }
         let Some(tree) = parser.parse(content, None) else {
@@ -45,37 +52,60 @@ impl Engine for CodeEngine {
         let path_str = path_string(path);
         let mut findings = Vec::new();
 
-        for rule in RuleRegistry::all() {
-            for lq in rule.queries.iter().filter(|q| q.language == language) {
-                let query = match Query::new(&ts_language, &lq.query) {
-                    Ok(q) => q,
-                    Err(_) => continue,
+        for (rule, query) in &bundle.queries {
+            let mut cursor = QueryCursor::new();
+            let mut matches = cursor.matches(query, tree.root_node(), content);
+            while let Some(m) = matches.next() {
+                let Some(capture) = m.captures.first() else {
+                    continue;
                 };
-                let mut cursor = QueryCursor::new();
-                let mut matches = cursor.matches(&query, tree.root_node(), content);
-                while let Some(m) = matches.next() {
-                    let Some(capture) = m.captures.first() else {
-                        continue;
-                    };
-                    let node = capture.node;
-                    let line = (node.start_position().row + 1) as u32;
-                    let snippet = snippet_for(node, content);
-                    findings.push(Finding::new(
-                        &rule,
-                        path_str.clone(),
-                        Some(line),
-                        Some(snippet.clone()),
-                        Evidence {
-                            kind: "api_call".to_string(),
-                            detail: snippet,
-                        },
-                    ));
-                }
+                let node = capture.node;
+                let line = (node.start_position().row + 1) as u32;
+                let snippet = snippet_for(node, content);
+                findings.push(Finding::new(
+                    rule,
+                    path_str.clone(),
+                    Some(line),
+                    Some(snippet.clone()),
+                    Evidence {
+                        kind: "api_call".to_string(),
+                        detail: snippet,
+                    },
+                ));
             }
         }
 
         findings
     }
+}
+
+fn bundle_for(language: &str) -> Option<&'static LangBundle> {
+    static CACHE: OnceLock<HashMap<String, LangBundle>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| {
+        let mut map = HashMap::new();
+        for lang in live_languages() {
+            let Some(ts_lang) = ts_language(lang) else {
+                continue;
+            };
+            let mut queries = Vec::new();
+            for rule in RuleRegistry::all() {
+                for lq in rule.queries.iter().filter(|q| q.language == *lang) {
+                    if let Ok(query) = Query::new(&ts_lang, &lq.query) {
+                        queries.push((rule.clone(), query));
+                    }
+                }
+            }
+            map.insert(
+                (*lang).to_string(),
+                LangBundle {
+                    language: ts_lang,
+                    queries,
+                },
+            );
+        }
+        map
+    });
+    cache.get(language)
 }
 
 fn language_id(path: &Path) -> Option<&'static str> {
