@@ -81,3 +81,68 @@ fn scan_help_mentions_formats() {
         assert!(stdout.contains(flag), "scan --help missing {flag}");
     }
 }
+
+/// Scratch dir holding a file with known findings: rust_positive.rs pins
+/// SNOOT001 + SNOOT002 (high) and SNOOT013 (low) — no critical findings.
+fn fixture_scan_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = include_str!("fixtures/code/rust_positive.rs");
+    std::fs::write(dir.join("main.rs"), src).unwrap();
+    dir
+}
+
+#[test]
+fn fail_on_high_exits_2() {
+    let dir = fixture_scan_dir("snoot-smoke-fail-high");
+    let out = snoot()
+        .arg("scan")
+        .arg(&dir)
+        .arg("--fail-on")
+        .arg("high")
+        .arg("--quiet")
+        .output()
+        .expect("run snoot scan --fail-on high");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fail_on_low_triggers_on_low_findings() {
+    let dir = fixture_scan_dir("snoot-smoke-fail-low");
+    let out = snoot()
+        .arg("scan")
+        .arg(&dir)
+        .arg("--fail-on")
+        .arg("low")
+        .arg("--quiet")
+        .output()
+        .expect("run snoot scan --fail-on low");
+    assert_eq!(out.status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fail_on_critical_passes_without_critical_findings() {
+    let dir = fixture_scan_dir("snoot-smoke-fail-critical");
+    let out = snoot()
+        .arg("scan")
+        .arg(&dir)
+        .arg("--fail-on")
+        .arg("critical")
+        .arg("--quiet")
+        .output()
+        .expect("run snoot scan --fail-on critical");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
