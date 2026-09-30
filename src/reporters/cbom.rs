@@ -8,6 +8,13 @@ use serde_json::{json, Value};
 
 use crate::scanner::ScanReport;
 
+fn key_size_from_detail(detail: &str) -> Option<u32> {
+    // e.g. "RSA PRIVATE KEY (PKCS#1 PEM, 2048-bit)"
+    let idx = detail.find("-bit")?;
+    let start = detail[..idx].rfind(|c: char| !c.is_ascii_digit())? + 1;
+    detail[start..idx].parse().ok()
+}
+
 fn primitive_for(rule_id: &str) -> (&'static str, &'static str) {
     match rule_id {
         "SNOOT001" | "SNOOT003" | "SNOOT011" => ("RSA", "key-agreement-or-signature"),
