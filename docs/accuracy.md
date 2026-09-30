@@ -69,7 +69,21 @@ https://github.com/go-jose/go-jose — **37 findings / 89 files / ~3.2s**
 | SNOOT013 | 1 | SHA-1 |
 | SNOOT020 | 1 | certificate inventory |
 
+### 4. rzcoder/node-rsa (2026-09-30)
+
+https://github.com/rzcoder/node-rsa — **7 findings / 102 files / ~1.4s**
+
+| Rule | Count | Notes |
+|------|------:|-------|
+| SNOOT016 | 4 | classical deps in package manifests |
+| SNOOT001 | 1 | `generateKeyPair`-style call |
+| SNOOT003 / 010 | 2 | PEM private key material |
+
+**Miss:** most of node-rsa's own RSA implementation uses custom helpers, not
+`crypto.generateKeyPair` / `createSign`, so code-engine coverage is thin on
+this library. Application code that calls `crypto.createSign` is covered;
+library internals need more Node-specific queries.
+
 **Takeaway:** on libraries that *are* classical crypto, snoot reports a dense
-but expected surface. Remaining gaps: key-size on PEMs, fewer FPs on
-crypto-implementation repos vs application repos (severity/context), and
-Node/Java consumer apps still to sample.
+but expected surface when APIs match the rule table. Gaps: PKCS#8 key-size,
+deeper Node/Java library-internal shapes, and application-repo sampling.
