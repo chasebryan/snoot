@@ -1,0 +1,7 @@
+[package]
+name = "fixture-app"
+version = "0.1.0"
+
+[dependencies]
+rsa = "0.9"
+serde = "1"

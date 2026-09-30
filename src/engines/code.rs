@@ -2,18 +2,10 @@
 //!
 //! **Job** (DESIGN.md §5): parse each source file with the tree-sitter grammar
 //! for its language, run the per-language queries attached to each rule in
-//! [`crate::rules::RuleRegistry`], and emit a finding per match — e.g.
-//! `Rsa::generate` (Rust), `Crypto.PublicKey.RSA.generate` (Python),
-//! `rsa.GenerateKey` (Go), `crypto.createSign` (Node), `KeyPairGenerator`
-//! (Java), `RSA_generate_key` (OpenSSL C).
+//! [`crate::rules::RuleRegistry`], and emit a finding per match.
 //!
-//! AST queries catch API usage precisely where regexes drown in false
-//! positives (comments, string literals, similarly-named locals). Rules stay
-//! data: adding a language means adding query strings in `rules.rs`, not new
-//! control flow here.
-//!
-//! **Status**: week-2 in progress. Rust and Python query execution is live;
-//! remaining grammars (Go, JS/TS, Java, C/C++) land as their crates are enabled.
+//! **Status**: week-2. All v1 languages are wired (Rust, Python, Go,
+//! JavaScript, TypeScript, Java, C, C++).
 
 use std::path::Path;
 
@@ -39,7 +31,6 @@ impl Engine for CodeEngine {
             return Vec::new();
         };
         let Some(ts_language) = ts_language(language) else {
-            // Grammar not wired yet (week 2 remaining languages).
             return Vec::new();
         };
 
@@ -58,7 +49,7 @@ impl Engine for CodeEngine {
             for lq in rule.queries.iter().filter(|q| q.language == language) {
                 let query = match Query::new(&ts_language, &lq.query) {
                     Ok(q) => q,
-                    Err(_) => continue, // skip invalid/outdated query strings
+                    Err(_) => continue,
                 };
                 let mut cursor = QueryCursor::new();
                 let mut matches = cursor.matches(&query, tree.root_node(), content);
@@ -87,7 +78,6 @@ impl Engine for CodeEngine {
     }
 }
 
-/// Map a file extension to a snoot language id.
 fn language_id(path: &Path) -> Option<&'static str> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("rs") => Some("rust"),
@@ -106,13 +96,16 @@ fn ts_language(language: &str) -> Option<tree_sitter::Language> {
     match language {
         "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
         "python" => Some(tree_sitter_python::LANGUAGE.into()),
-        // week 2: go, javascript, typescript, java, c, cpp
+        "go" => Some(tree_sitter_go::LANGUAGE.into()),
+        "javascript" => Some(tree_sitter_javascript::LANGUAGE.into()),
+        "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        "java" => Some(tree_sitter_java::LANGUAGE.into()),
+        "c" => Some(tree_sitter_c::LANGUAGE.into()),
+        "cpp" => Some(tree_sitter_cpp::LANGUAGE.into()),
         _ => None,
     }
 }
 
-/// tree-sitter [`Parser`] for a supported language. Kept for tests/callers
-/// that want a ready parser rather than a bare [`Language`].
 #[allow(dead_code)]
 fn parser_for(language: &str) -> Option<Parser> {
     let ts_language = ts_language(language)?;
@@ -121,16 +114,17 @@ fn parser_for(language: &str) -> Option<Parser> {
     Some(parser)
 }
 
-/// Prefer the enclosing call node as the snippet; fall back to the capture.
 fn snippet_for(node: tree_sitter::Node<'_>, content: &[u8]) -> String {
     let mut cur = node;
     let mut chosen = node;
     while let Some(parent) = cur.parent() {
-        if parent.kind() == "call_expression" || parent.kind() == "call" {
-            chosen = parent;
-            break;
+        match parent.kind() {
+            "call_expression" | "call" | "method_invocation" => {
+                chosen = parent;
+                break;
+            }
+            _ => cur = parent,
         }
-        cur = parent;
     }
     let text = chosen
         .utf8_text(content)
@@ -154,9 +148,13 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// Languages covered in v1 (DESIGN.md §7).
 #[allow(dead_code)]
 pub fn supported_languages() -> &'static [&'static str] {
+    live_languages()
+}
+
+#[allow(dead_code)]
+pub fn live_languages() -> &'static [&'static str] {
     &[
         "rust",
         "python",
@@ -167,12 +165,6 @@ pub fn supported_languages() -> &'static [&'static str] {
         "c",
         "cpp",
     ]
-}
-
-/// Languages the code engine can actually parse today.
-#[allow(dead_code)]
-pub fn live_languages() -> &'static [&'static str] {
-    &["rust", "python"]
 }
 
 #[cfg(test)]
@@ -192,9 +184,31 @@ mod tests {
     }
 
     #[test]
-    fn detects_python_rsa_generate() {
-        let path = PathBuf::from("keys.py");
-        let src = b"from Crypto.PublicKey import RSA\nkey = RSA.generate(2048)\n";
+    fn detects_go_rsa_generate() {
+        let path = PathBuf::from("keys.go");
+        let src = b"package main\nfunc f() { rsa.GenerateKey(rand.Reader, 2048) }\n";
+        let findings = CodeEngine.scan(&path, src);
+        assert!(
+            findings.iter().any(|f| f.rule_id == "SNOOT001"),
+            "expected SNOOT001, got: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn detects_js_create_sign() {
+        let path = PathBuf::from("sign.js");
+        let src = b"const s = crypto.createSign('RSA-SHA256');\n";
+        let findings = CodeEngine.scan(&path, src);
+        assert!(
+            findings.iter().any(|f| f.rule_id == "SNOOT008"),
+            "expected SNOOT008, got: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn detects_c_rsa_generate() {
+        let path = PathBuf::from("keys.c");
+        let src = b"void f() { RSA_generate_key_ex(rsa, 2048, e, NULL); }\n";
         let findings = CodeEngine.scan(&path, src);
         assert!(
             findings.iter().any(|f| f.rule_id == "SNOOT001"),

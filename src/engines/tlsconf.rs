@@ -1,25 +1,49 @@
 //! TLS-config engine: TLS configuration string scanning.
 //!
-//! **Job** (DESIGN.md §5): find TLS configurations — nginx
-//! `ssl_protocols` / `ssl_ciphers`, Apache `SSLProtocol` /
-//! `SSLCipherSuite`, Caddyfile `tls` blocks, language-level TLS setup
-//! (`ssl.SSLContext`, `tls.Config`, `SSL_CTX_new`) — and flag configurations
-//! that negotiate classical-only key exchange with no hybrid post-quantum
-//! group (e.g. X25519+ML-KEM-768, `X25519MLKEM768`).
+//! Flags configs that speak TLS but never mention a hybrid PQC group
+//! (`X25519MLKEM768`, `SecP256r1MLKEM768`, etc.). Heuristic: presence of TLS
+//! protocol/cipher/curve directives without a known hybrid token → SNOOT005.
 //!
-//! This is where SNOOT005 lives. The engine understands "this config pins
-//! TLS 1.2 with ECDHE-only ciphers" as a medium finding with a concrete
-//! remediation (enable the hybrid group), not just a version string.
-//!
-//! **Status**: week-3 milestone. File matching is real; config-shape
-//! recognition lands in week 3.
+//! **Status**: week-2 partial (DESIGN listed week 3). Covers nginx/Apache-
+//! style directives and common filenames; deeper virtual-host parsing later.
 
 use std::path::Path;
 
 use crate::engines::Engine;
-use crate::model::Finding;
+use crate::model::{Evidence, Finding};
+use crate::rules::RuleRegistry;
 
 pub struct TlsConfEngine;
+
+/// Tokens that indicate a hybrid PQC key-exchange group is configured.
+const HYBRID_TOKENS: &[&str] = &[
+    "x25519mlkem768",
+    "secp256r1mlkem768",
+    "secp384r1mlkem1024",
+    "x25519kyber768",
+    "mlkem768",
+    "ml-kem",
+    "mlkem",
+    "kyber768",
+    "kyber1024",
+];
+
+/// Directives / keywords that mean "this file configures TLS".
+const TLS_MARKERS: &[&str] = &[
+    "ssl_protocols",
+    "ssl_ciphers",
+    "ssl_ecdh_curve",
+    "ssl_conf_command",
+    "sslprotocol",
+    "sslciphersuite",
+    "sslengine",
+    "tls1.2",
+    "tls1.3",
+    "tlsv1.2",
+    "tlsv1.3",
+    "curves =",
+    "curvelist",
+];
 
 impl Engine for TlsConfEngine {
     fn name(&self) -> &'static str {
@@ -32,6 +56,7 @@ impl Engine for TlsConfEngine {
             if lower == "caddyfile"
                 || lower.contains("nginx")
                 || lower.contains("apache")
+                || lower.contains("httpd")
                 || lower.contains("ssl")
                 || lower.contains("tls")
             {
@@ -44,11 +69,70 @@ impl Engine for TlsConfEngine {
         )
     }
 
-    fn scan(&self, _path: &Path, _content: &[u8]) -> Vec<Finding> {
-        // Week 3: recognize server blocks / virtual hosts, extract protocol
-        // and cipher-suite directives, check for hybrid PQC groups
-        // (X25519MLKEM768 and friends). Emits SNOOT005 for classical-only
-        // configs; info findings for the CBOM inventory otherwise.
-        Vec::new()
+    fn scan(&self, path: &Path, content: &[u8]) -> Vec<Finding> {
+        let Ok(text) = std::str::from_utf8(content) else {
+            return Vec::new();
+        };
+        let lower = text.to_ascii_lowercase();
+
+        let has_tls = TLS_MARKERS.iter().any(|m| lower.contains(m));
+        if !has_tls {
+            return Vec::new();
+        }
+        let has_hybrid = HYBRID_TOKENS.iter().any(|t| lower.contains(t));
+        if has_hybrid {
+            return Vec::new();
+        }
+
+        let Some(rule) = RuleRegistry::by_id("SNOOT005") else {
+            return Vec::new();
+        };
+
+        // Point at the first TLS marker line for a useful location.
+        let mut line_no = None;
+        let mut snippet = None;
+        for (idx, line) in text.lines().enumerate() {
+            let l = line.to_ascii_lowercase();
+            if TLS_MARKERS.iter().any(|m| l.contains(m)) {
+                line_no = Some((idx + 1) as u32);
+                snippet = Some(line.trim().to_string());
+                break;
+            }
+        }
+
+        let path_str = path.to_string_lossy().replace('\\', "/");
+        vec![Finding::new(
+            &rule,
+            path_str,
+            line_no,
+            snippet,
+            Evidence {
+                kind: "tls_config".to_string(),
+                detail: "TLS config present with no hybrid PQC group token".to_string(),
+            },
+        )]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn flags_classical_nginx_tls() {
+        let path = PathBuf::from("nginx-ssl.conf");
+        let src = b"server {\n  ssl_protocols TLSv1.2 TLSv1.3;\n  ssl_ciphers HIGH:!aNULL;\n}\n";
+        let findings = TlsConfEngine.scan(&path, src);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule_id, "SNOOT005");
+    }
+
+    #[test]
+    fn allows_hybrid_group() {
+        let path = PathBuf::from("nginx-ssl.conf");
+        let src = b"ssl_protocols TLSv1.3;\nssl_conf_command Groups X25519MLKEM768:X25519;\n";
+        let findings = TlsConfEngine.scan(&path, src);
+        assert!(findings.is_empty());
     }
 }

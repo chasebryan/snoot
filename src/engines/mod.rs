@@ -8,9 +8,9 @@
 //! - [`manifest`] — dependency manifests (Cargo.toml, package.json, go.mod, …)
 //! - [`tlsconf`] — TLS configuration strings (protocol versions, cipher suites)
 //!
-//! Week 2 in progress: code engine runs tree-sitter queries for Rust/Python;
-//! secrets engine detects PKCS#1 RSA PEM armor. Manifest and TLS config
-//! engines still stub until week 3.
+//! Week 2: code engine covers all v1 languages; secrets detects PEM armor;
+//! TLS config flags classical-only configs; manifest engine flags known
+//! classical-crypto direct dependencies.
 
 pub mod code;
 pub mod manifest;

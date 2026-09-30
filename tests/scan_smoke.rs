@@ -25,12 +25,13 @@ fn version_flag_works() {
 }
 
 #[test]
-fn rules_lists_week1_rule_ids() {
+fn rules_lists_rule_ids() {
     let out = snoot().arg("rules").output().expect("run snoot rules");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    for id in ["SNOOT001", "SNOOT002", "SNOOT003", "SNOOT004", "SNOOT005"] {
-        assert!(stdout.contains(id), "rules output missing {id}");
+    for i in 1..=16 {
+        let id = format!("SNOOT{i:03}");
+        assert!(stdout.contains(&id), "rules output missing {id}");
     }
 }
 

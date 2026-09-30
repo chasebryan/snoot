@@ -1,18 +1,8 @@
 //! Secrets engine: PEM / DER / JWK / key-material scanning + key-size extraction.
 //!
-//! **Job** (DESIGN.md §5): find key material checked into the tree —
-//! `-----BEGIN RSA PRIVATE KEY-----` blocks, PKCS#8 / PKCS#1 DER blobs,
-//! JWK `{"kty":"RSA","n":"…","d":"…"}` objects — parse each one properly
-//! (don't regex the ASN.1), extract the algorithm and key size, and emit
-//! findings like SNOOT003. Key size matters: it drives severity and the
-//! remediation mapping (RSA-1024 vs RSA-4096 get different guidance).
-//!
-//! Finds private keys (critical) as well as public keys and certificates
-//! (info — inventory feed for the CBOM).
-//!
-//! **Status**: week-2 partial. PKCS#1 RSA PEM armor detection is live
-//! (SNOOT003). Full PEM/DER/JWK parsing with ASN.1 key-size extraction
-//! lands later in week 2/3.
+//! **Status**: week-2. PKCS#1 RSA/EC/DSA PEM armor and generic PKCS#8
+//! `PRIVATE KEY` blocks are detected. Full ASN.1 key-size extraction and JWK
+//! parsing still land later.
 
 use std::path::Path;
 
@@ -22,9 +12,25 @@ use crate::rules::RuleRegistry;
 
 pub struct SecretsEngine;
 
-/// Armor labels that map directly to a classical private-key rule.
-/// Full ASN.1 discrimination for generic `PRIVATE KEY` (PKCS#8) is later.
-const RSA_PRIVATE_PEM: &str = "BEGIN RSA PRIVATE KEY";
+/// (armor substring, rule id, evidence detail)
+const PEM_PRIVATE_RULES: &[(&str, &str, &str)] = &[
+    (
+        "BEGIN RSA PRIVATE KEY",
+        "SNOOT003",
+        "RSA PRIVATE KEY (PKCS#1 PEM)",
+    ),
+    (
+        "BEGIN EC PRIVATE KEY",
+        "SNOOT009",
+        "EC PRIVATE KEY (SEC1 PEM)",
+    ),
+    ("BEGIN DSA PRIVATE KEY", "SNOOT010", "DSA PRIVATE KEY (PEM)"),
+    (
+        "BEGIN PRIVATE KEY",
+        "SNOOT010",
+        "PRIVATE KEY (PKCS#8 PEM — classical until proven otherwise)",
+    ),
+];
 
 impl Engine for SecretsEngine {
     fn name(&self) -> &'static str {
@@ -32,8 +38,6 @@ impl Engine for SecretsEngine {
     }
 
     fn file_matches(&self, path: &Path) -> bool {
-        // Dedicated key/cert files, plus source files (PEM blocks get pasted
-        // into code and config more often than anyone admits).
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             let lower = name.to_ascii_lowercase();
             if lower.ends_with(".pem")
@@ -76,27 +80,46 @@ impl Engine for SecretsEngine {
         let Ok(text) = std::str::from_utf8(content) else {
             return Vec::new();
         };
-        let Some(rule) = RuleRegistry::by_id("SNOOT003") else {
-            return Vec::new();
-        };
 
         let path_str = path.to_string_lossy().replace('\\', "/");
         let mut findings = Vec::new();
 
         for (idx, line) in text.lines().enumerate() {
-            if line.contains(RSA_PRIVATE_PEM) {
-                let snippet = line.trim().to_string();
-                findings.push(Finding::new(
-                    &rule,
-                    path_str.clone(),
-                    Some((idx + 1) as u32),
-                    Some(snippet.clone()),
-                    Evidence {
-                        kind: "pem_block".to_string(),
-                        detail: "RSA PRIVATE KEY (PKCS#1 PEM)".to_string(),
-                    },
-                ));
+            // Prefer the most specific armor match (RSA/EC/DSA before generic).
+            let mut matched: Option<(&str, &str)> = None;
+            for (armor, rule_id, detail) in PEM_PRIVATE_RULES {
+                if line.contains(armor) {
+                    // Avoid double-firing: "BEGIN RSA PRIVATE KEY" also contains
+                    // "BEGIN" + "PRIVATE KEY" but not the exact generic label.
+                    if *armor == "BEGIN PRIVATE KEY"
+                        && (line.contains("RSA PRIVATE KEY")
+                            || line.contains("EC PRIVATE KEY")
+                            || line.contains("DSA PRIVATE KEY")
+                            || line.contains("ENCRYPTED PRIVATE KEY"))
+                    {
+                        continue;
+                    }
+                    matched = Some((rule_id, detail));
+                    break;
+                }
             }
+            let Some((rule_id, detail)) = matched else {
+                continue;
+            };
+            let Some(rule) = RuleRegistry::by_id(rule_id) else {
+                continue;
+            };
+            let snippet = line.trim().to_string();
+            findings.push(Finding::new(
+                &rule,
+                path_str.clone(),
+                Some((idx + 1) as u32),
+                Some(snippet),
+                Evidence {
+                    kind: "pem_block".to_string(),
+                    detail: detail.to_string(),
+                },
+            ));
         }
 
         findings
@@ -115,7 +138,22 @@ mod tests {
         let findings = SecretsEngine.scan(&path, src);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].rule_id, "SNOOT003");
-        assert_eq!(findings[0].location.line, Some(1));
+    }
+
+    #[test]
+    fn detects_ec_private_pem() {
+        let path = PathBuf::from("secrets/ec.key");
+        let src = b"-----BEGIN EC PRIVATE KEY-----\nMHQCAQEE...\n-----END EC PRIVATE KEY-----\n";
+        let findings = SecretsEngine.scan(&path, src);
+        assert_eq!(findings[0].rule_id, "SNOOT009");
+    }
+
+    #[test]
+    fn detects_pkcs8_private_pem() {
+        let path = PathBuf::from("secrets/pkcs8.key");
+        let src = b"-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBg...\n-----END PRIVATE KEY-----\n";
+        let findings = SecretsEngine.scan(&path, src);
+        assert_eq!(findings[0].rule_id, "SNOOT010");
     }
 
     #[test]

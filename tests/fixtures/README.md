@@ -1,14 +1,17 @@
 # Fixture corpus
 
-Known-positive and known-negative samples for each live detection rule.
-Accuracy tests in `tests/fixture_corpus.rs` rewrite these shapes into a temp
-tree and assert the CLI reports the expected rule IDs.
+Known-positive and known-negative samples for live detection rules.
+Accuracy tests in `tests/fixture_corpus.rs` scan these trees directly.
 
 | Path | Expected |
 |------|----------|
-| `positive/rust/rsa_gen.rs` | SNOOT001 |
-| `positive/rust/ecdsa.rs` | SNOOT002 |
-| `positive/rust/dh.rs` | SNOOT004 |
-| `positive/python/*.py` | SNOOT001 / SNOOT002 / SNOOT004 |
-| `positive/secrets/dev.key` | SNOOT003 |
+| `positive/rust/*` | SNOOT001 / 002 / 004 |
+| `positive/python/*` | SNOOT001 / 002 / 004 / 006 / 007 |
+| `positive/go/*` | SNOOT001 / 002 |
+| `positive/javascript/*` | SNOOT001 / 008 |
+| `positive/typescript/*` | SNOOT008 |
+| `positive/java/*` | SNOOT001 |
+| `positive/c/*`, `positive/cpp/*` | SNOOT001 |
+| `positive/secrets/*` | SNOOT003 / 009 / 010 |
+| `positive/tls/*` | SNOOT005 |
 | `negative/**` | no findings |

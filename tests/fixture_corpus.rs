@@ -1,8 +1,4 @@
 //! Fixture-corpus accuracy tests (DESIGN.md §10).
-//!
-//! Every live rule has at least one known-positive and one known-negative
-//! sample under `tests/fixtures/`. These drive the CLI end-to-end so a
-//! regression that only shows up through scan orchestration still fails CI.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -51,7 +47,10 @@ fn positives_fire_expected_rules() {
     let doc = scan_json(&root);
     let ids = finding_ids(&doc);
 
-    for expected in ["SNOOT001", "SNOOT002", "SNOOT003", "SNOOT004"] {
+    for expected in [
+        "SNOOT001", "SNOOT002", "SNOOT003", "SNOOT004", "SNOOT005", "SNOOT006", "SNOOT007",
+        "SNOOT008", "SNOOT009", "SNOOT010", "SNOOT016",
+    ] {
         assert!(
             ids.iter().any(|id| id == expected),
             "positive corpus missing {expected}; got {ids:?}"
@@ -70,4 +69,31 @@ fn negatives_stay_clean() {
         findings.is_empty(),
         "negative corpus should be clean, got: {findings:?}"
     );
+}
+
+#[test]
+fn multi_language_positives_detected() {
+    let root = fixtures_root().join("positive");
+    let doc = scan_json(&root);
+    let paths: Vec<&str> = doc["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["location"]["path"].as_str().unwrap())
+        .collect();
+
+    for needle in [
+        "/go/",
+        "/javascript/",
+        "/typescript/",
+        "/java/",
+        "/c/",
+        "/cpp/",
+        "/tls/",
+    ] {
+        assert!(
+            paths.iter().any(|p| p.contains(needle)),
+            "expected a finding under *{needle}*, got {paths:?}"
+        );
+    }
 }
