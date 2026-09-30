@@ -61,6 +61,18 @@ developer-native, open-source tool for that first step.
 Findings for primitives orange supports carry an `orange_note` pointing at
 what orange can verify or replace.
 
+## Compared to pqc-scan / pqctl / pqcanalyzer
+
+Those tools are useful spikes; snoot aims to be the maintainer-grade,
+developer-native option:
+
+- **Rules as data** with tree-sitter AST queries (not regex-only on source)
+- **Evidence formats** auditors ask for: SARIF + CycloneDX CBOM
+- **CI-native**: `--fail-on`, baselines, `.snootignore`, GitHub Action
+- **Honest scope**: documented gaps, fixture accuracy gate, real-world notes
+  in `docs/accuracy.md`
+- **orange hook**: findings point at verification/learning downstream
+
 ## Honest limitations (v1)
 
 - Heuristic detection; no data-flow analysis yet — a flagged call site means

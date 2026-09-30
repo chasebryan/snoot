@@ -109,13 +109,15 @@ impl Engine for SecretsEngine {
                 }
                 let body_lines = &lines[i + 1..j.min(lines.len())];
                 let mut detail = detail.to_string();
+                let mut title_override = None;
                 if rule_id == "SNOOT003" {
                     if let Some(bits) = rsa_pkcs1_modulus_bits(body_lines) {
                         detail = format!("{detail}, {bits}-bit");
+                        title_override = Some(format!("RSA-{bits} private key material in PEM"));
                     }
                 }
                 if let Some(rule) = RuleRegistry::by_id(rule_id) {
-                    findings.push(Finding::new(
+                    let mut finding = Finding::new(
                         &rule,
                         path_str.clone(),
                         Some((i + 1) as u32),
@@ -124,7 +126,11 @@ impl Engine for SecretsEngine {
                             kind: "pem_block".to_string(),
                             detail,
                         },
-                    ));
+                    );
+                    if let Some(title) = title_override {
+                        finding.title = title;
+                    }
+                    findings.push(finding);
                 }
                 i = j.saturating_add(1);
                 continue;
