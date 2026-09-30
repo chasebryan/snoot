@@ -123,8 +123,6 @@ pub struct Finding {
 }
 
 impl Finding {
-    // Week-1 API surface: constructed by engines starting week 2.
-    #[allow(dead_code)]
     pub fn new(
         rule: &Rule,
         path: impl Into<String>,
@@ -153,8 +151,6 @@ impl Finding {
     }
 
     /// Deterministic 64-bit FNV-1a hex. No extra dependencies, stable across runs.
-    // Week-1 API surface: used by baseline suppression starting week 4.
-    #[allow(dead_code)]
     pub fn fingerprint(rule_id: &str, path: &str, snippet: &str) -> String {
         let mut hash: u64 = 0xcbf29ce484222325;
         for byte in format!("{rule_id}\0{path}\0{snippet}").bytes() {

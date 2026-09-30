@@ -1,6 +1,6 @@
 # snoot — Design Doc (v1)
 
-**Status:** Draft · **Date:** 2026-09-30 · **Author:** Muse, for Chase Bryan
+**Status:** Draft · **Date:** 2026-09-30 (week 2 in progress) · **Author:** Muse, for Chase Bryan
 **Tagline:** *Snoot out the crypto hiding in your codebase.*
 
 ## 1. Problem

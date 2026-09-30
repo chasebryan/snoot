@@ -11,11 +11,11 @@ NIST post-quantum replacement (ML-KEM, ML-DSA, SLH-DSA), and emits
 machine-readable evidence: SARIF (GitHub PR annotations), CycloneDX CBOM (the
 compliance artifact), and JSON.
 
-**Status: pre-alpha — week 1 of 6.** The crate skeleton, CLI, data model, and
-first five rules are in. The detection engines are wired but stubbed; see
-[DESIGN.md](DESIGN.md) for the six-week plan. Nothing here has been
-independently reviewed, and week-1 snoot will cheerfully report zero findings
-on code it can't yet read. Trust is the product, so the gaps are documented,
+**Status: pre-alpha — week 2 of 6.** The crate skeleton, CLI, data model, and
+first five rules are in. The Rust/Python tree-sitter code engine and PKCS#1
+RSA PEM detection are live; remaining languages, manifests, and TLS config
+still stub. See [DESIGN.md](DESIGN.md) for the six-week plan. Nothing here has
+been independently reviewed. Trust is the product, so the gaps are documented,
 not hidden.
 
 ## Quick start

@@ -3,7 +3,8 @@
 //! Each rule carries its id, severity, description, classical → PQC
 //! remediation mapping, and per-language tree-sitter queries (consumed by the
 //! code engine). Adding a rule or a language means adding data here — no new
-//! control flow. v1 target: 20+ rules; week 1 ships the first 5.
+//! control flow. v1 target: 20+ rules; week 1 shipped the first 5; week 2
+//! expands language coverage and query shapes on top of that set.
 //!
 //! Migration mappings follow DESIGN.md §6 (NIST FIPS 203/204/205).
 
@@ -43,13 +44,25 @@ impl RuleRegistry {
                         "rust",
                         "(call_expression\n  function: (scoped_identifier\n    path: (identifier) @_mod\n    name: (identifier) @_fn)\n  (#eq? @_mod \"RsaPrivateKey\")\n  (#eq? @_fn \"new\"))",
                     ),
+                    // PyCryptodome / PyCrypto: `from Crypto.PublicKey import RSA` then `RSA.generate(...)`
                     q(
                         "python",
-                        "(call\n  function: (attribute\n    object: (attribute\n      object: (identifier) @_a\n      attribute: (identifier) @_b)\n    attribute: (identifier) @_fn)\n  (#eq? @_a \"Crypto\")\n  (#eq? @_b \"RSA\")\n  (#eq? @_fn \"generate\"))",
+                        "(call\n  function: (attribute\n    object: (identifier) @_mod\n    attribute: (identifier) @_fn)\n  (#eq? @_mod \"RSA\")\n  (#eq? @_fn \"generate\"))",
                     ),
+                    // Fully-qualified: `Crypto.PublicKey.RSA.generate(...)`
+                    q(
+                        "python",
+                        "(call\n  function: (attribute\n    object: (attribute\n      object: (attribute\n        object: (identifier) @_a\n        attribute: (identifier) @_b)\n      attribute: (identifier) @_c)\n    attribute: (identifier) @_fn)\n  (#eq? @_a \"Crypto\")\n  (#eq? @_b \"PublicKey\")\n  (#eq? @_c \"RSA\")\n  (#eq? @_fn \"generate\"))",
+                    ),
+                    // `rsa` package: `rsa.newkeys(2048)`
                     q(
                         "python",
                         "(call\n  function: (attribute\n    object: (identifier) @_mod\n    attribute: (identifier) @_fn)\n  (#eq? @_mod \"rsa\")\n  (#eq? @_fn \"newkeys\"))",
+                    ),
+                    // `cryptography` hazmat: `rsa.generate_private_key(...)`
+                    q(
+                        "python",
+                        "(call\n  function: (attribute\n    object: (identifier) @_mod\n    attribute: (identifier) @_fn)\n  (#eq? @_mod \"rsa\")\n  (#eq? @_fn \"generate_private_key\"))",
                     ),
                 ],
                 cwe: Some("CWE-327".to_string()),
@@ -156,13 +169,10 @@ impl RuleRegistry {
         ]
     }
 
-    // Used by unit tests now; by the code engine starting week 2.
-    #[allow(dead_code)]
     pub fn by_id(id: &str) -> Option<Rule> {
         Self::all().into_iter().find(|r| r.id == id)
     }
 
-    // Week-1 API surface: used by reporters/tests starting week 2.
     #[allow(dead_code)]
     pub fn count() -> usize {
         Self::all().len()

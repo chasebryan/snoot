@@ -2,8 +2,8 @@
 //!
 //! The scanner itself owns no detection logic — it walks files with `walkdir`,
 //! asks each engine whether a file is in scope (`Engine::file_matches`), and
-//! aggregates the findings. Week 1: the walk and dispatch are real; the
-//! engines return what they can (currently stubs, see `engines/`).
+//! aggregates the findings. Code (Rust/Python) and PKCS#1 RSA PEM detection
+//! are live; manifest and TLS engines still stub (week 3).
 
 use std::path::PathBuf;
 use std::time::Instant;

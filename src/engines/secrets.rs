@@ -10,15 +10,21 @@
 //! Finds private keys (critical) as well as public keys and certificates
 //! (info — inventory feed for the CBOM).
 //!
-//! **Status**: week-3 milestone. File matching is real; PEM/DER/JWK parsing
-//! lands in week 3.
+//! **Status**: week-2 partial. PKCS#1 RSA PEM armor detection is live
+//! (SNOOT003). Full PEM/DER/JWK parsing with ASN.1 key-size extraction
+//! lands later in week 2/3.
 
 use std::path::Path;
 
 use crate::engines::Engine;
-use crate::model::Finding;
+use crate::model::{Evidence, Finding};
+use crate::rules::RuleRegistry;
 
 pub struct SecretsEngine;
+
+/// Armor labels that map directly to a classical private-key rule.
+/// Full ASN.1 discrimination for generic `PRIVATE KEY` (PKCS#8) is later.
+const RSA_PRIVATE_PEM: &str = "BEGIN RSA PRIVATE KEY";
 
 impl Engine for SecretsEngine {
     fn name(&self) -> &'static str {
@@ -66,11 +72,58 @@ impl Engine for SecretsEngine {
         )
     }
 
-    fn scan(&self, _path: &Path, _content: &[u8]) -> Vec<Finding> {
-        // Week 3: scan for PEM armor boundaries, parse DER with a real ASN.1
-        // parser, detect JWK objects, extract (algorithm, key size, private?).
-        // Emits SNOOT003 for classical private keys; info-level inventory
-        // findings for public keys / certs (CBOM feed).
-        Vec::new()
+    fn scan(&self, path: &Path, content: &[u8]) -> Vec<Finding> {
+        let Ok(text) = std::str::from_utf8(content) else {
+            return Vec::new();
+        };
+        let Some(rule) = RuleRegistry::by_id("SNOOT003") else {
+            return Vec::new();
+        };
+
+        let path_str = path.to_string_lossy().replace('\\', "/");
+        let mut findings = Vec::new();
+
+        for (idx, line) in text.lines().enumerate() {
+            if line.contains(RSA_PRIVATE_PEM) {
+                let snippet = line.trim().to_string();
+                findings.push(Finding::new(
+                    &rule,
+                    path_str.clone(),
+                    Some((idx + 1) as u32),
+                    Some(snippet.clone()),
+                    Evidence {
+                        kind: "pem_block".to_string(),
+                        detail: "RSA PRIVATE KEY (PKCS#1 PEM)".to_string(),
+                    },
+                ));
+            }
+        }
+
+        findings
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn detects_rsa_private_pem() {
+        let path = PathBuf::from("secrets/dev.key");
+        let src = b"-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----\n";
+        let findings = SecretsEngine.scan(&path, src);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule_id, "SNOOT003");
+        assert_eq!(findings[0].location.line, Some(1));
+    }
+
+    #[test]
+    fn ignores_public_pem() {
+        let path = PathBuf::from("secrets/dev.pub");
+        let src =
+            b"-----BEGIN PUBLIC KEY-----\nMFwwDQYJKoZIhvcNAQEBBQAD...\n-----END PUBLIC KEY-----\n";
+        let findings = SecretsEngine.scan(&path, src);
+        assert!(findings.is_empty());
     }
 }
