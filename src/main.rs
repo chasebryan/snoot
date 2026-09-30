@@ -156,10 +156,34 @@ fn cmd_scan(args: ScanArgs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn cmd_init(_args: InitArgs) -> ExitCode {
-    // Week 4 milestone: baseline read/write + finding fingerprinting.
-    eprintln!("snoot init: not yet implemented (see DESIGN.md §13, week 4).");
-    ExitCode::from(4)
+fn cmd_init(args: InitArgs) -> ExitCode {
+    let opts = scanner::ScanOptions {
+        root: args.path.clone(),
+        ..Default::default()
+    };
+    let report = match scanner::scan(&opts) {
+        Ok(report) => report,
+        Err(err) => {
+            eprintln!("snoot: scan failed: {err:#}");
+            return ExitCode::from(3);
+        }
+    };
+
+    match baseline::Baseline::write(&args.output, &report.findings) {
+        Ok(()) => {
+            eprintln!(
+                "snoot: wrote baseline {} ({} finding{})",
+                args.output.display(),
+                report.findings.len(),
+                if report.findings.len() == 1 { "" } else { "s" }
+            );
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("snoot: cannot write baseline: {err:#}");
+            ExitCode::from(3)
+        }
+    }
 }
 
 fn cmd_rules() -> ExitCode {

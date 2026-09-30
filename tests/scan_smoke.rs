@@ -82,3 +82,53 @@ fn scan_help_mentions_formats() {
         assert!(stdout.contains(flag), "scan --help missing {flag}");
     }
 }
+
+#[test]
+fn init_and_baseline_suppress_findings() {
+    let dir = std::env::temp_dir().join("snoot-smoke-baseline");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/keys.rs"),
+        "fn f() { let _ = Rsa::generate(&mut rng, 2048); }\n",
+    )
+    .unwrap();
+
+    let baseline = dir.join(".snoot-baseline.json");
+    let init = snoot()
+        .arg("init")
+        .arg(&dir)
+        .arg("--output")
+        .arg(&baseline)
+        .output()
+        .expect("snoot init");
+    assert!(
+        init.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    assert!(baseline.is_file());
+
+    let scan = snoot()
+        .arg("scan")
+        .arg(&dir)
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg("--format")
+        .arg("json")
+        .arg("--quiet")
+        .output()
+        .expect("snoot scan --baseline");
+    assert!(
+        scan.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&scan.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&scan.stdout);
+    assert!(
+        stdout.contains("\"findings\": []"),
+        "baseline should suppress, got: {stdout}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

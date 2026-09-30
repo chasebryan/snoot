@@ -11,11 +11,13 @@ NIST post-quantum replacement (ML-KEM, ML-DSA, SLH-DSA), and emits
 machine-readable evidence: SARIF (GitHub PR annotations), CycloneDX CBOM (the
 compliance artifact), and JSON.
 
-**Status: pre-alpha — week 2 of 6.** Tree-sitter detection is live for all six
-v1 languages (Rust, Python, Go, JS/TS, Java, C/C++), with 15 rules, PEM private
-key detection, and classical-only TLS config flagging. Full ASN.1/JWK parsing and lockfile/transitive analysis are next. See [DESIGN.md](DESIGN.md) for the six-week
-plan. Nothing here has been independently reviewed. Trust is the product, so
-the gaps are documented, not hidden.
+**Status: pre-alpha — week 2/3 of 6.** Tree-sitter detection is live for all six
+v1 languages (Rust, Python, Go, JS/TS, Java, C/C++), with 16 rules, PEM private
+key detection, classical-only TLS flagging, direct-manifest crypto deps,
+baseline/`snoot init`, and a GitHub Action. Full ASN.1/JWK parsing and
+lockfile/transitive analysis are next. See [DESIGN.md](DESIGN.md). Nothing
+here has been independently reviewed. Trust is the product, so the gaps are
+documented, not hidden.
 
 ## Quick start
 

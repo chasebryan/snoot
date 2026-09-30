@@ -1,0 +1,35 @@
+name: 'snoot'
+description: 'Snoot out classical public-key crypto hiding in your codebase'
+author: 'Chase Bryan'
+inputs:
+  path:
+    description: 'Path to scan'
+    required: false
+    default: '.'
+  fail-on:
+    description: 'Fail the job if findings at or above this severity (info|low|medium|high|critical). Empty skips gating.'
+    required: false
+    default: ''
+  sarif:
+    description: 'SARIF output path (uploaded by the caller or a follow-up step)'
+    required: false
+    default: 'snoot.sarif'
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: '1.90.0'
+    - name: Build snoot
+      shell: bash
+      run: cargo install --path "${{ github.action_path }}" --locked
+    - name: Run snoot scan
+      shell: bash
+      run: |
+        set -euo pipefail
+        args=(scan "${{ inputs.path }}" --format sarif --output "${{ inputs.sarif }}" --format console)
+        if [[ -n "${{ inputs.fail-on }}" ]]; then
+          args+=(--fail-on "${{ inputs.fail-on }}")
+        fi
+        snoot "${args[@]}"

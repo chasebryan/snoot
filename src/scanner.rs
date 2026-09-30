@@ -133,11 +133,17 @@ pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
         }
     }
 
-    // TODO (week 4): apply baseline suppression here via `baseline::Baseline`.
-    let _ = opts
-        .baseline
-        .as_ref()
-        .map(|p| format!("baseline {} not yet applied", p.display()));
+    // Apply baseline suppression when requested.
+    if let Some(baseline_path) = &opts.baseline {
+        match crate::baseline::Baseline::load(baseline_path) {
+            Ok(baseline) => {
+                findings.retain(|f| !baseline.suppresses(f));
+            }
+            Err(err) => {
+                anyhow::bail!("loading baseline {}: {err:#}", baseline_path.display());
+            }
+        }
+    }
 
     findings.sort_by(|a, b| {
         b.severity
