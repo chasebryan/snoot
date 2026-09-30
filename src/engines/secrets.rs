@@ -115,6 +115,12 @@ impl Engine for SecretsEngine {
                         detail = format!("{detail}, {bits}-bit");
                         title_override = Some(format!("RSA-{bits} private key material in PEM"));
                     }
+                } else if rule_id == "SNOOT010" && trimmed.contains("BEGIN PRIVATE KEY") {
+                    if let Some(bits) = pkcs8_rsa_modulus_bits(body_lines) {
+                        detail = format!("RSA PRIVATE KEY (PKCS#8 PEM), {bits}-bit");
+                        title_override =
+                            Some(format!("RSA-{bits} private key material in PEM (PKCS#8)"));
+                    }
                 }
                 if let Some(rule) = RuleRegistry::by_id(rule_id) {
                     let mut finding = Finding::new(
@@ -235,19 +241,44 @@ fn jwk_rsa_modulus_bits(compact_lower: &str) -> Option<u32> {
     Some(bytes.len() as u32 * 8)
 }
 
-/// Decode PKCS#1 RSAPrivateKey PEM body and return modulus bit length.
-fn rsa_pkcs1_modulus_bits(body_lines: &[&str]) -> Option<u32> {
+fn decode_pem_body(body_lines: &[&str]) -> Option<Vec<u8>> {
     let b64: String = body_lines
         .iter()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('-'))
         .collect();
     if b64.is_empty() || b64.contains("...") {
-        // Truncated fixture bodies — skip size extraction.
         return None;
     }
-    let der = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
-    der_rsa_modulus_bits(&der)
+    base64::engine::general_purpose::STANDARD.decode(b64).ok()
+}
+
+/// Decode PKCS#1 RSAPrivateKey PEM body and return modulus bit length.
+fn rsa_pkcs1_modulus_bits(body_lines: &[&str]) -> Option<u32> {
+    der_rsa_modulus_bits(&decode_pem_body(body_lines)?)
+}
+
+/// PKCS#8 PrivateKeyInfo wrapping an RSA private key (OID 1.2.840.113549.1.1.1).
+fn pkcs8_rsa_modulus_bits(body_lines: &[&str]) -> Option<u32> {
+    let der = decode_pem_body(body_lines)?;
+    // rsaEncryption OID
+    const RSA_OID: &[u8] = &[
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+    ];
+    let oid_pos = der.windows(RSA_OID.len()).position(|w| w == RSA_OID)?;
+    let mut i = oid_pos + RSA_OID.len();
+    // Optional NULL parameters.
+    if der.get(i..i + 2) == Some(&[0x05, 0x00]) {
+        i += 2;
+    }
+    // OCTET STRING wrapping RSAPrivateKey.
+    if *der.get(i)? != 0x04 {
+        return None;
+    }
+    i += 1;
+    let (len, next) = der_read_len(&der, i)?;
+    let rsa_der = der.get(next..next + len)?;
+    der_rsa_modulus_bits(rsa_der)
 }
 
 /// Walk a DER-encoded RSAPrivateKey SEQUENCE and read the modulus INTEGER.
@@ -342,6 +373,20 @@ mod tests {
             "{}",
             findings[0].evidence.detail
         );
+    }
+
+    #[test]
+    fn extracts_pkcs8_rsa_2048_bit_size() {
+        let pem = include_str!("../../tests/fixtures/positive/secrets/rsa2048-pkcs8.key");
+        let path = PathBuf::from("secrets/rsa2048-pkcs8.key");
+        let findings = SecretsEngine.scan(&path, pem.as_bytes());
+        assert_eq!(findings[0].rule_id, "SNOOT010");
+        assert!(
+            findings[0].evidence.detail.contains("2048-bit"),
+            "{}",
+            findings[0].evidence.detail
+        );
+        assert!(findings[0].title.contains("RSA-2048"));
     }
 
     #[test]
