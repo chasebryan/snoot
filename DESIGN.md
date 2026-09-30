@@ -203,17 +203,18 @@ This is the differentiator against the toy scanners. v1 ships with:
 
 ## 13. Six-week milestones
 
-- **Week 1**: Crate skeleton, CLI, model types, console + JSON reporters.
+- **Week 1** ✅: Crate skeleton, CLI, model types, console + JSON reporters.
   First 5 rules (Rust + Python).
-- **Week 2**: tree-sitter engine + 4 more languages. PEM/key-material engine.
-  15 rules.
-- **Week 3**: Manifest engine, TLS config engine. 20+ rules. SARIF reporter.
-- **Week 4**: CBOM reporter, baseline/suppression, `--fail-on`. Fixture corpus
-  complete (every rule has +/- fixtures).
-- **Week 5**: Real-world validation on 3 repos, accuracy docs, honest
-  limitations. GitHub Action + SARIF upload working end-to-end.
-- **Week 6**: Docs (README with HNDL story + CNSA 2.0 table + pqc-scan
-  comparison), release workflow, crates.io publish, announcement.
+- **Week 2** ✅: tree-sitter engine + all six languages. PEM/JWK key-material
+  engine. 20 rules.
+- **Week 3** ✅ (core): Manifest engine, TLS config engine. SARIF reporter.
+- **Week 4** ✅ (core): CBOM reporter (primitive mapping), baseline/`snoot init`,
+  `--fail-on`, `.snootignore`, fixture corpus + self-scan gate.
+- **Week 5** ✅ (core): Real-world validation on 3 repos (RustCrypto/RSA,
+  python-rsa, go-jose) documented in `docs/accuracy.md`. GitHub Action +
+  SARIF upload path present; consumer-repo e2e still to demo.
+- **Week 6**: Docs polish (CNSA 2.0 table + pqc-scan comparison), crates.io
+  publish, announcement. Release workflow already drafted.
 
 ## 14. Open questions
 
