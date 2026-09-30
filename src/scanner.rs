@@ -152,6 +152,10 @@ pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
     let mut seen = HashSet::new();
     findings.retain(|f| seen.insert(f.fingerprint.clone()));
 
+    // DESIGN.md §6: classical crypto in test/example code is medium, not
+    // high/critical — still inventoried, but not CI-blocking by default.
+    demote_test_path_severity(&mut findings);
+
     // Apply baseline suppression when requested.
     if let Some(baseline_path) = &opts.baseline {
         match crate::baseline::Baseline::load(baseline_path) {
@@ -182,6 +186,37 @@ pub fn scan(opts: &ScanOptions) -> anyhow::Result<ScanReport> {
     })
 }
 
+fn is_testish_path(path: &str) -> bool {
+    let p = path.replace('\\', "/").to_ascii_lowercase();
+    let markers = [
+        "/tests/",
+        "/test/",
+        "/fixtures/",
+        "/examples/",
+        "/example/",
+        "/benches/",
+        "/bench/",
+        "/testdata/",
+        "/__tests__/",
+        "/spec/",
+    ];
+    markers.iter().any(|m| p.contains(m))
+        || p.starts_with("tests/")
+        || p.starts_with("test/")
+        || p.starts_with("fixtures/")
+        || p.starts_with("examples/")
+        || p.starts_with("benches/")
+}
+
+fn demote_test_path_severity(findings: &mut [Finding]) {
+    use crate::model::Severity;
+    for f in findings {
+        if is_testish_path(&f.location.path) && f.severity > Severity::Medium {
+            f.severity = Severity::Medium;
+        }
+    }
+}
+
 /// Relativize `path` against the scan root for display, falling back to the
 /// full path. Context helper used by reporters.
 #[allow(dead_code)]
@@ -191,4 +226,46 @@ pub fn display_path(root: &PathBuf, path: &str) -> String {
         .map(|p| p.to_string_lossy().into_owned())
         .with_context(|| format!("strip prefix {}", root.display()))
         .unwrap_or_else(|_| path.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Evidence, Severity};
+    use crate::rules::RuleRegistry;
+
+    #[test]
+    fn demotes_critical_in_tests_dir() {
+        let rule = RuleRegistry::by_id("SNOOT003").unwrap();
+        let mut finding = crate::model::Finding::new(
+            &rule,
+            "tests/examples/key.pem",
+            Some(1),
+            Some("-----BEGIN RSA PRIVATE KEY-----".into()),
+            Evidence {
+                kind: "pem_block".into(),
+                detail: "RSA".into(),
+            },
+        );
+        assert_eq!(finding.severity, Severity::Critical);
+        demote_test_path_severity(std::slice::from_mut(&mut finding));
+        assert_eq!(finding.severity, Severity::Medium);
+    }
+
+    #[test]
+    fn keeps_critical_in_app_code() {
+        let rule = RuleRegistry::by_id("SNOOT003").unwrap();
+        let mut finding = crate::model::Finding::new(
+            &rule,
+            "src/auth/keys.pem",
+            Some(1),
+            Some("-----BEGIN RSA PRIVATE KEY-----".into()),
+            Evidence {
+                kind: "pem_block".into(),
+                detail: "RSA".into(),
+            },
+        );
+        demote_test_path_severity(std::slice::from_mut(&mut finding));
+        assert_eq!(finding.severity, Severity::Critical);
+    }
 }
