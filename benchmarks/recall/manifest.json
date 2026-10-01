@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "corpus": "corpus",
+  "description": "Synthetic seed corpus for the recall harness. It validates the measurement machinery; it is not evidence of production recall.",
+  "labels": [
+    {
+      "id": "python-pyca-rsa-keygen",
+      "path": "python_rsa.py",
+      "line": 4,
+      "rule_ids": ["SNOOT001"],
+      "notes": "RSA private-key generation through cryptography.hazmat."
+    },
+    {
+      "id": "python-rs256-jwt",
+      "path": "python_jwt.py",
+      "line": 3,
+      "rule_ids": ["SNOOT014"],
+      "notes": "Classical RSA JWT signing algorithm."
+    },
+    {
+      "id": "nginx-legacy-protocol",
+      "path": "nginx_legacy.conf",
+      "rule_ids": ["SNOOT005"]
+    },
+    {
+      "id": "nginx-legacy-cipher",
+      "path": "nginx_legacy.conf",
+      "rule_ids": ["SNOOT018"]
+    },
+    {
+      "id": "nginx-no-pqc-hybrid",
+      "path": "nginx_legacy.conf",
+      "rule_ids": ["SNOOT019"]
+    },
+    {
+      "id": "python-direct-crypto-dependency",
+      "path": "requirements.txt",
+      "line": 2,
+      "rule_ids": ["SNOOT017"]
+    }
+  ]
+}
