@@ -34,13 +34,14 @@ const CIPHER_DIRECTIVES: &[&str] = &["ssl_ciphers", "sslciphersuite", "cipherstr
 
 /// Tokens that indicate a hybrid PQC key-exchange group is configured.
 const HYBRID_TOKENS: &[&str] = &[
+    "secp256r1mlkem768",
+    "secp384r1mlkem1024",
     "x25519mlkem768",
     "mlkem768",
     "ml-kem",
     "mlkem",
     "x25519kyber768",
     "kyber",
-    "hybrid",
 ];
 
 /// If `line` (lowercased, trimmed) is one of the named directives, return
@@ -69,6 +70,9 @@ fn directive_value<'a>(line: &'a str, names: &[&str]) -> Option<&'a str> {
 
 /// True when a cipher-suite token (uppercased) is classically weak.
 fn weak_suite(suite: &str) -> bool {
+    if suite.starts_with(['!', '-']) {
+        return false;
+    }
     let s = suite.to_ascii_uppercase();
     s.contains("RC4")
         || s.contains("DES") // DES-CBC-*, DES-EDE3-*, *3DES*
@@ -93,17 +97,18 @@ fn push_finding(
     let Some(rule) = RuleRegistry::by_id(rule_id) else {
         return;
     };
-    let snippet: String = snippet.trim().chars().take(160).collect();
-    let finding = Finding::new(
+    let displayed: String = snippet.trim().chars().take(160).collect();
+    let mut finding = Finding::new(
         &rule,
-        path.to_string_lossy(),
+        path.to_string_lossy().replace('\\', "/"),
         line,
-        Some(snippet),
+        Some(snippet.trim().to_string()),
         Evidence {
             kind: "tls_config".to_string(),
             detail,
         },
     );
+    finding.location.snippet = Some(displayed);
     if seen.insert(finding.fingerprint.clone()) {
         findings.push(finding);
     }
@@ -117,15 +122,22 @@ impl Engine for TlsConfEngine {
     fn file_matches(&self, path: &Path) -> bool {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             let lower = name.to_ascii_lowercase();
-            if lower == "caddyfile"
-                || lower.contains("nginx")
-                || lower.contains("apache")
-                || lower.contains("ssl")
-                || lower.contains("tls")
+            if lower == "caddyfile" {
+                return true;
+            }
+            let config = matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some("conf" | "cnf" | "cfg" | "ini" | "yaml" | "yml")
+            );
+            if config
+                && ["nginx", "apache", "httpd", "ssl", "tls"]
+                    .iter()
+                    .any(|word| lower.contains(word))
             {
                 return true;
             }
         }
+
         matches!(
             path.extension().and_then(|e| e.to_str()),
             Some("conf" | "cnf" | "cfg" | "ini")
@@ -142,12 +154,28 @@ impl Engine for TlsConfEngine {
 
         for (i, raw) in text.lines().enumerate() {
             let line_no = i as u32 + 1;
-            let line = raw.trim();
+            let line = raw.split('#').next().unwrap_or("").trim();
             if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
                 continue;
             }
             let low = line.to_ascii_lowercase();
-            if HYBRID_TOKENS.iter().any(|t| low.contains(t)) {
+            let groups = directive_value(
+                &low,
+                &[
+                    "ssl_groups",
+                    "ssl_ecdh_curve",
+                    "ssl_conf_command",
+                    "groups",
+                    "curves",
+                    "curvelist",
+                ],
+            );
+            if groups.is_some_and(|v| {
+                HYBRID_TOKENS.iter().any(|t| {
+                    v.split(|c: char| !c.is_ascii_alphanumeric())
+                        .any(|token| token == *t)
+                })
+            }) {
                 saw_hybrid = true;
             }
 

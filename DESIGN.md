@@ -130,7 +130,7 @@ Migration mapping (each rule carries its remediation):
 | ECDSA P-256/P-384 (sign) | ML-DSA-65 / ML-DSA-87 (FIPS 204) |
 | ECDH / X25519 / X448 (exchange) | ML-KEM (FIPS 203), hybrid for interop |
 | DSA, DH < 3072 | Retire; ML-DSA / ML-KEM |
-| Ed25519 (sign) | Not quantum-vulnerable *today* via Shor the same way, but flagged info: plan ML-DSA migration per CNSA 2.0 |
+| Ed25519 (sign) | Quantum-vulnerable to Shor; inventory these signature keys and plan ML-DSA migration |
 
 v1 target: **20+ rules** across the six languages.
 
@@ -219,31 +219,17 @@ This is the differentiator against the toy scanners. v1 ships with:
 - **Week 4**: CBOM reporter, baseline/suppression, `--fail-on`. Fixture corpus
   complete (every rule has +/- fixtures).
 - **Week 5**: Real-world validation on 3 repos, accuracy docs, honest
-  limitations. GitHub Action + SARIF upload working end-to-end.- **Week 6**: Docs (README with HNDL story + CNSA 2.0 table + pqc-scan
+  limitations. GitHub Action + SARIF upload working end-to-end.
+- **Week 6**: Docs (README with HNDL story + CNSA 2.0 table + pqc-scan
   comparison), release workflow, crates.io publish, announcement.
 
-**Status as of 2026-09-30 (week 6, done — v1 release-ready)** — release prep
-complete, nothing published (all publishing steps are manual, per the
-maintainer's constraint): `cargo publish --dry-run` clean, `cargo doc`
-warning-free (fixed two rustdoc intra-doc-link warnings in
-`src/engines/manifest.rs`), Cargo.toml metadata audited (description,
-keywords, categories, repository, readme, license = AGPL-3.0-only — all
-correct); stale C/C++ "not yet wired" comment removed (they've been wired
-since week 3). `docs/RELEASE_CHECKLIST.md` written — ordered,
-copy-pasteable manual steps: web-UI upload of `assets/banner.jpg`,
-`.github/workflows/ci.yml`, `.github/workflows/release.yml` (app lacks
-Workflows permission), `cargo login` + `cargo publish`, tag push
-(`v*` triggers the release workflow), draft-release review, smoke test.
-`.github/workflows/release.yml` builds 5 targets (linux x86_64/aarch64,
-macOS aarch64/x86_64, Windows x86_64) and opens a draft GitHub release
-with archives attached; YAML validated locally (5 targets, actions
-pinned, draft: true). `docs/accuracy.md` gained "How snoot compares"
-(pqctl, pqc-scan, pqcanalyzer — factual, scope/accuracy/outputs
-differences, no trash-talk). `docs/ANNOUNCEMENT_DRAFT.md` written, terse,
-not posted. Final gate: 59 unit + 7 CLI tests green, clippy `-D warnings`
-clean, fmt clean, `cargo build --release` compiles (LTO, ~1m36s);
-release binary self-scan (`--exclude tests/fixtures/** --fail-on medium`)
-clean. v1 scope from the six-week plan is done.
+**Readiness reassessment, 2026-09-30:** the implementation supports a controlled
+pre-alpha evaluation. The earlier release-ready declaration was premature:
+the committed tree lacked binary fixtures and CI workflows, and baselines,
+error handling, and report schemas required repair. The integrated revision
+restores those assets and adds regression gates. Unmeasured recall, limited
+production-code validation, and untested release distribution remain production
+release gates. See `docs/RELEASE_CHECKLIST.md` for the evidence and next steps.
 
 ## 14. Open questions
 

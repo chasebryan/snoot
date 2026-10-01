@@ -87,7 +87,8 @@ fn ts_language(language: &str) -> Option<tree_sitter::Language> {
 fn query_languages(file_language: &'static str) -> Vec<&'static str> {
     match file_language {
         "typescript" => vec!["typescript", "javascript"],
-        "tsx" => vec!["tsx", "javascript"],
+        "tsx" => vec!["tsx", "typescript", "javascript"],
+        "cpp" => vec!["cpp", "c"],
         other => vec![other],
     }
 }
@@ -149,26 +150,10 @@ impl Engine for CodeEngine {
     }
 
     fn file_matches(&self, path: &Path) -> bool {
-        matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some(
-                "rs" | "py"
-                    | "go"
-                    | "js"
-                    | "jsx"
-                    | "ts"
-                    | "tsx"
-                    | "mjs"
-                    | "cjs"
-                    | "java"
-                    | "c"
-                    | "h"
-                    | "cpp"
-                    | "hpp"
-                    | "cc"
-                    | "cxx"
-            )
-        )
+        path.extension()
+            .and_then(|e| e.to_str())
+            .and_then(language_for_extension)
+            .is_some()
     }
 
     fn scan(&self, path: &Path, content: &[u8]) -> Vec<Finding> {
@@ -196,9 +181,9 @@ impl Engine for CodeEngine {
         let root = tree.root_node();
 
         let rules = RuleRegistry::all();
-        let path_str = path.to_string_lossy().into_owned();
+        let path_str = path.to_string_lossy().replace('\\', "/");
         let mut findings = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
+        let mut seen = HashSet::new();
         let mut cursor = tree_sitter::QueryCursor::new();
 
         for cq in &compiled_lang.queries {
@@ -220,23 +205,62 @@ impl Engine for CodeEngine {
                 if start == usize::MAX || end <= start {
                     continue;
                 }
-                let end = end.min(content.len());
-                let snippet: String = String::from_utf8_lossy(&content[start..end])
+                // Include arguments in the fingerprint, even when queries only capture the callee.
+                let mut node = m.captures[0].node;
+                while let Some(parent) = node.parent() {
+                    if matches!(
+                        parent.kind(),
+                        "call_expression" | "call" | "method_invocation" | "new_expression"
+                    ) && parent.start_byte() <= start
+                        && parent.end_byte() >= end
+                    {
+                        node = parent;
+                        break;
+                    }
+                    node = parent;
+                }
+                if matches!(
+                    node.kind(),
+                    "call_expression" | "call" | "method_invocation" | "new_expression"
+                ) {
+                    start = node.start_byte();
+                    end = node.end_byte();
+                    start_row = node.start_position().row as u32;
+                }
+                let full = String::from_utf8_lossy(&content[start..end.min(content.len())])
                     .trim()
-                    .chars()
-                    .take(160)
-                    .collect();
-                let finding = Finding::new(
+                    .to_string();
+                let displayed = if full.contains("PRIVATE KEY") {
+                    "<API call containing key material; redacted>".to_string()
+                } else {
+                    full.chars().take(160).collect()
+                };
+                let mut finding = Finding::new(
                     rule,
                     path_str.clone(),
                     Some(start_row + 1),
-                    Some(snippet),
+                    Some(full),
                     Evidence {
                         kind: "api_call".to_string(),
                         detail: format!("{} API call ({file_lang})", rule.title),
                     },
                 );
-                if seen.insert(finding.fingerprint.clone()) {
+                finding.location.snippet = Some(displayed);
+                let line_start = content[..start]
+                    .iter()
+                    .rposition(|b| *b == b'\n')
+                    .map_or(0, |i| i + 1);
+                finding.location.column = Some(
+                    String::from_utf8_lossy(&content[line_start..start])
+                        .chars()
+                        .count() as u32
+                        + 1,
+                );
+                if seen.insert((
+                    finding.fingerprint.clone(),
+                    finding.location.line,
+                    finding.location.column,
+                )) {
                     findings.push(finding);
                 }
             }
@@ -350,6 +374,9 @@ mod tests {
     #[test]
     fn every_query_fires_on_fixture() {
         let fixtures: &[(&str, &str, &str)] = &[
+            ("SNOOT001", "python", "RSA.generate(2048)"),
+            ("SNOOT001", "python", "rsa.generate_private_key(public_exponent=65537, key_size=2048)"),
+            ("SNOOT001", "javascript", "const key = new NodeRSA({b: 2048});"),
             // SNOOT001 — RSA key generation
             ("SNOOT001", "rust", "fn f() { let k = Rsa::generate(2048); }"),
             (

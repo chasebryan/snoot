@@ -38,8 +38,6 @@ const MANIFEST_FILES: &[&str] = &[
     "pom.xml",
     "build.gradle",
     "build.gradle.kts",
-    "Gemfile",
-    "composer.json",
 ];
 
 /// One dependency found in a manifest.
@@ -87,6 +85,13 @@ const FLAGGED: &[FlaggedDep] = &[
         note: "v3 line unmaintained with known CVEs; use golang-jwt/jwt/v5",
         max_version: Some("v5.0.0"),
     },
+    FlaggedDep { name: "rsa", prefix: false, rule: "SNOOT016", note: "RSA API surface; dependency presence does not establish active use", max_version: None },
+    FlaggedDep { name: "ecdsa", prefix: false, rule: "SNOOT016", note: "ECDSA API surface; dependency presence does not establish active use", max_version: None },
+    FlaggedDep { name: "p256", prefix: false, rule: "SNOOT016", note: "P-256 API surface; dependency presence does not establish active use", max_version: None },
+    FlaggedDep { name: "p384", prefix: false, rule: "SNOOT016", note: "P-384 API surface; dependency presence does not establish active use", max_version: None },
+    FlaggedDep { name: "x25519-dalek", prefix: false, rule: "SNOOT016", note: "X25519 API surface; dependency presence does not establish active use", max_version: None },
+    FlaggedDep { name: "ed25519-dalek", prefix: false, rule: "SNOOT016", note: "Ed25519 API surface (quantum-vulnerable signature inventory); dependency presence does not establish active use", max_version: None },
+    FlaggedDep { name: "node-forge", prefix: false, rule: "SNOOT016", note: "classical public-key API surface; dependency presence does not establish active use", max_version: None },
     // Maintained, but classical-only crypto.
     FlaggedDep {
         name: "pycryptodome",
@@ -230,6 +235,11 @@ fn parse_cargo_toml(text: &str) -> Vec<Dep> {
     let mut deps = Vec::new();
     let mut collect = |t: &toml::Table| {
         for (name, v) in t {
+            let package = v
+                .as_table()
+                .and_then(|t| t.get("package"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(name);
             let req = match v {
                 toml::Value::String(s) => s.clone(),
                 toml::Value::Table(t) => t
@@ -239,7 +249,7 @@ fn parse_cargo_toml(text: &str) -> Vec<Dep> {
                     .to_string(),
                 _ => String::new(),
             };
-            deps.push(dep(name.clone(), req, text));
+            deps.push(dep(package.to_string(), req, text));
         }
     };
     for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
@@ -249,8 +259,10 @@ fn parse_cargo_toml(text: &str) -> Vec<Dep> {
     }
     if let Some(target) = table.get("target").and_then(|v| v.as_table()) {
         for (_, cfg) in target {
-            if let Some(d) = cfg.get("dependencies").and_then(|v| v.as_table()) {
-                collect(d);
+            for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                if let Some(d) = cfg.get(section).and_then(|v| v.as_table()) {
+                    collect(d);
+                }
             }
         }
     }
@@ -376,7 +388,7 @@ fn parse_go_mod(text: &str) -> Vec<Dep> {
     let mut deps = Vec::new();
     let mut in_require = false;
     for (i, line) in text.lines().enumerate() {
-        let t = line.trim();
+        let t = line.split("//").next().unwrap_or("").trim();
         if t.starts_with("require (") {
             in_require = true;
             continue;
@@ -414,39 +426,33 @@ fn tag_content(line: &str, tag: &str) -> Option<String> {
 }
 
 fn parse_pom_xml(text: &str) -> Vec<Dep> {
+    // Preserve line offsets while ignoring XML comments. The dependency fields may share a line.
+    let mut cleaned = text.to_string();
+    while let Some(start) = cleaned.find("<!--") {
+        let Some(end) = cleaned[start + 4..].find("-->").map(|i| start + 4 + i + 3) else {
+            break;
+        };
+        let blank: String = cleaned[start..end]
+            .chars()
+            .map(|c| if c == '\n' { '\n' } else { ' ' })
+            .collect();
+        cleaned.replace_range(start..end, &blank);
+    }
     let mut deps = Vec::new();
-    let mut in_dep = false;
-    let (mut artifact, mut version, mut start_line) = (None, None, 0u32);
-    for (i, line) in text.lines().enumerate() {
-        let t = line.trim();
-        if t.starts_with("<dependency") && !t.starts_with("</") {
-            in_dep = true;
-            artifact = None;
-            version = None;
-            start_line = i as u32 + 1;
-            continue;
+    let mut offset = 0;
+    while let Some(start) = cleaned[offset..].find("<dependency>").map(|i| offset + i) {
+        let Some(end) = cleaned[start..].find("</dependency>").map(|i| start + i) else {
+            break;
+        };
+        let block = &cleaned[start..end];
+        if let Some(name) = tag_content(block, "artifactId") {
+            deps.push(Dep {
+                name,
+                req: tag_content(block, "version").unwrap_or_default(),
+                line: Some(cleaned[..start].bytes().filter(|b| *b == b'\n').count() as u32 + 1),
+            });
         }
-        if t.starts_with("</dependency") {
-            if in_dep {
-                if let Some(a) = artifact.take() {
-                    deps.push(Dep {
-                        name: a,
-                        req: version.take().unwrap_or_default(),
-                        line: Some(start_line),
-                    });
-                }
-                in_dep = false;
-            }
-            continue;
-        }
-        if in_dep {
-            if let Some(v) = tag_content(t, "artifactId") {
-                artifact = Some(v);
-            }
-            if let Some(v) = tag_content(t, "version") {
-                version = Some(v);
-            }
-        }
+        offset = end + "</dependency>".len();
     }
     deps
 }
@@ -456,6 +462,30 @@ fn parse_build_gradle(text: &str) -> Vec<Dep> {
         .enumerate()
         .filter_map(|(i, line)| {
             let t = line.trim();
+            if t.starts_with("//")
+                || t.starts_with('#')
+                || t.starts_with("/*")
+                || t.starts_with('*')
+            {
+                return None;
+            }
+            let declaration = t.split(|c: char| c.is_whitespace() || c == '(').next()?;
+            if ![
+                "implementation",
+                "api",
+                "compile",
+                "compileOnly",
+                "runtimeOnly",
+                "testImplementation",
+                "testCompile",
+                "testRuntimeOnly",
+                "annotationProcessor",
+                "classpath",
+            ]
+            .contains(&declaration)
+            {
+                return None;
+            }
             let q = t.find(['\'', '"'])?;
             let quote = t.as_bytes()[q] as char;
             let rest = &t[q + 1..];
@@ -496,6 +526,20 @@ impl Engine for ManifestEngine {
             .unwrap_or(false)
     }
 
+    fn validate(&self, path: &Path, content: &[u8]) -> anyhow::Result<()> {
+        let text = std::str::from_utf8(content)?;
+        match path.file_name().and_then(|n| n.to_str()) {
+            Some("Cargo.toml" | "pyproject.toml") => {
+                text.parse::<toml::Table>()?;
+            }
+            Some("package.json") => {
+                serde_json::from_str::<serde_json::Value>(text)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn scan(&self, path: &Path, content: &[u8]) -> Vec<Finding> {
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let text = String::from_utf8_lossy(content);
@@ -508,14 +552,11 @@ impl Engine for ManifestEngine {
             let Some(rule) = RuleRegistry::by_id(rule_id) else {
                 continue;
             };
-            let snippet: String = format!("{} {}", dep.name, dep.req)
-                .trim()
-                .chars()
-                .take(160)
-                .collect();
-            let finding = Finding::new(
+            let snippet = format!("{} {}", dep.name, dep.req).trim().to_string();
+            let displayed = snippet.chars().take(160).collect();
+            let mut finding = Finding::new(
                 &rule,
-                path.to_string_lossy(),
+                path.to_string_lossy().replace('\\', "/"),
                 dep.line,
                 Some(snippet),
                 Evidence {
@@ -526,6 +567,7 @@ impl Engine for ManifestEngine {
                     ),
                 },
             );
+            finding.location.snippet = Some(displayed);
             if seen.insert(finding.fingerprint.clone()) {
                 findings.push(finding);
             }

@@ -52,6 +52,9 @@ impl RuleRegistry {
                         "python",
                         "(call\n  function: (attribute\n    object: (identifier) @_mod\n    attribute: (identifier) @_fn)\n  (#eq? @_mod \"rsa\")\n  (#eq? @_fn \"newkeys\"))",
                     ),
+                    q("python", r#"(call function: (attribute object: (identifier) @_obj attribute: (identifier) @_fn) (#eq? @_obj "RSA") (#eq? @_fn "generate"))"#),
+                    q("python", r#"(call function: (attribute object: (identifier) @_obj attribute: (identifier) @_fn) (#eq? @_obj "rsa") (#eq? @_fn "generate_private_key"))"#),
+                    q("javascript", r#"(new_expression constructor: (identifier) @_cls (#eq? @_cls "NodeRSA"))"#),
                     // rsa.GenerateKey(rand.Reader, 2048)
                     q(
                         "go",
@@ -613,17 +616,14 @@ impl RuleRegistry {
                 id: "SNOOT016".to_string(),
                 title: "Classical-crypto library dependency".to_string(),
                 severity: Severity::Medium,
-                description: "A dependency manifest declares a library that \
-                    provides only classical public-key cryptography (RSA, \
-                    ECDSA/ECDH, DSA). The dependency itself is maintained, \
-                    but everything built on it is quantum-vulnerable."
+                description: "A direct dependency exposes classical public-key cryptography \
+                    or legacy cryptographic helpers. Presence is an inventory signal; it does \
+                    not establish active use, algorithm selection, or absence of PQC support."
                     .to_string(),
-                remediation: "Inventory this dependency for PQC migration. \
-                    Prefer libraries with a published PQC roadmap (e.g. \
-                    aws-lc-rs / liboqs bindings for ML-KEM/ML-DSA) and plan \
-                    the swap against CNSA 2.0 timelines."
+                remediation: "Review the dependency's actual call sites and maintenance status. \
+                    Plan PQC migration for classical public-key uses; symmetric primitives \
+                    require separate algorithm and key-size review."
                     .to_string(),
-                // Detected by the manifest engine, not tree-sitter.
                 queries: vec![],
                 cwe: None,
                 orange_note: None,
@@ -728,15 +728,12 @@ impl RuleRegistry {
                 id: "SNOOT022".to_string(),
                 title: "Public key / certificate inventory".to_string(),
                 severity: Severity::Info,
-                description: "A public key or certificate that is not \
-                    classically quantum-vulnerable was found (Ed25519-family \
-                    keys, non-RSA/ECDSA certificates, public JWKs). \
-                    Inventory-only: no action needed today, but the asset \
-                    belongs in the cryptographic bill of materials."
+                description: "A public key or certificate was inventoried without a specific \
+                    RSA/ECDSA certificate finding. Inventory severity does not establish quantum \
+                    safety: RSA, EC, Ed25519, and other classical public-key algorithms require review."
                     .to_string(),
-                remediation: "No action required. Kept in the cryptographic \
-                    inventory (CBOM) for completeness; revisit if migration \
-                    scope expands to these algorithms."
+                remediation: "Review the algorithm and use of this asset. Include classical \
+                    public keys and Ed25519 signatures in the post-quantum migration inventory."
                     .to_string(),
                 // Detected by the secrets engine (DER/JWK parsing), not tree-sitter.
                 queries: vec![],

@@ -83,8 +83,9 @@ const OID_ED25519: &[u8] = &[0x06, 0x03, 0x2B, 0x65, 0x70];
 /// ecPublicKey OID to scan for).
 const OID_NAMED_CURVES: &[&[u8]] = &[
     &[0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07], // secp256r1
-    &[0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x22], // secp384r1
-    &[0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x23], // secp521r1
+    &[0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22],                   // secp384r1
+    &[0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x23],                   // secp521r1
+    &[0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x0A],                   // secp256k1
 ];
 
 /// Human-readable signature algorithm names, for evidence detail.
@@ -178,16 +179,30 @@ fn scan_pem(path: &Path, content: &[u8]) -> Vec<Finding> {
     for block in pem_blocks(&text) {
         if let Some((rule_id, evidence_kind, detail)) = pem_block_finding(&block) {
             if let Some(rule) = RuleRegistry::by_id(rule_id) {
-                findings.push(Finding::new(
+                let mut finding = Finding::new(
                     &rule,
-                    path.to_string_lossy(),
+                    path.to_string_lossy().replace('\\', "/"),
                     Some(block.line),
                     Some(format!("-----BEGIN {}-----", block.label)),
                     Evidence {
                         kind: evidence_kind.to_string(),
                         detail,
                     },
-                ));
+                );
+                finding.fingerprint = Finding::material_fingerprint(
+                    &rule.id,
+                    &finding.location.path,
+                    block.body.as_bytes(),
+                );
+                if let Ok(der) = base64::engine::general_purpose::STANDARD.decode(&block.body) {
+                    if let Some(bits) = rsa_key_bits(&der) {
+                        finding
+                            .evidence
+                            .detail
+                            .push_str(&format!("; {bits}-bit RSA"));
+                    }
+                }
+                findings.push(finding);
             }
         }
     }
@@ -318,12 +333,12 @@ fn cert_block_finding(b64_body: &str) -> Option<(&'static str, &'static str, Str
         DerKind::RsaCert => Some((
             "SNOOT020",
             "x509_cert",
-            format!("X.509 certificate: {}, RSA public key", sig_alg_name(&der)),
+            format!("X.509 certificate signed with {}", sig_alg_name(&der)),
         )),
         DerKind::EcdsaCert => Some((
             "SNOOT021",
             "x509_cert",
-            format!("X.509 certificate: {}, EC public key", sig_alg_name(&der)),
+            format!("X.509 certificate signed with {}", sig_alg_name(&der)),
         )),
         DerKind::OtherCert => Some((
             "SNOOT022",
@@ -463,49 +478,60 @@ fn classify_der(der: &[u8]) -> DerKind {
         None => return DerKind::Unknown,
     };
     let tags: Vec<u8> = kids.iter().map(|(t, _, _)| *t).collect();
-    let has = |oid: &[u8]| der.windows(oid.len()).any(|w| w == oid);
-
-    // X.509 certificate: Certificate ::= SEQUENCE { tbs, sigAlg, sigValue }.
+    let has_oid = |kid: &(u8, usize, usize), oid: &[u8]| {
+        if kid.0 != 0x30 {
+            return false;
+        }
+        // AlgorithmIdentifier's first child is its OID. Do not search key bytes or extensions.
+        let Some((tag, off, len)) = der_tlv(der, kid.1) else {
+            return false;
+        };
+        tag == 0x06 && off + len <= kid.1 + kid.2 && der[kid.1..off + len] == *oid
+    };
     if tags == [0x30, 0x30, 0x03] {
-        if OID_SIG_RSA.iter().any(|o| has(o)) {
+        if OID_SIG_RSA.iter().any(|o| has_oid(&kids[1], o)) {
             return DerKind::RsaCert;
         }
-        if OID_SIG_ECDSA.iter().any(|o| has(o)) {
+        if OID_SIG_ECDSA.iter().any(|o| has_oid(&kids[1], o)) {
             return DerKind::EcdsaCert;
         }
         return DerKind::OtherCert;
     }
-
-    // SubjectPublicKeyInfo: SEQUENCE { algorithm, subjectPublicKey }.
     if tags == [0x30, 0x03] {
-        if has(OID_RSA_ENCRYPTION) {
+        if has_oid(&kids[0], OID_RSA_ENCRYPTION) {
             return DerKind::RsaPublicKey;
         }
-        if has(OID_EC_PUBLIC_KEY) {
+        if has_oid(&kids[0], OID_EC_PUBLIC_KEY) {
             return DerKind::EcPublicKey;
         }
         return DerKind::Unknown;
     }
-
-    // Private-key material: PKCS#8 carries the algorithm OID directly.
-    if has(OID_RSA_ENCRYPTION) {
-        return DerKind::RsaPrivateKeyPkcs8;
+    if tags.len() >= 3
+        && tags[..3] == [0x02, 0x30, 0x04]
+        && matches!(der_small_int(der, &kids[0]), Some(0 | 1))
+    {
+        if has_oid(&kids[1], OID_RSA_ENCRYPTION) {
+            return DerKind::RsaPrivateKeyPkcs8;
+        }
+        if has_oid(&kids[1], OID_EC_PUBLIC_KEY) {
+            return DerKind::EcPrivateKeyPkcs8;
+        }
+        return DerKind::Unknown;
     }
-    if has(OID_EC_PUBLIC_KEY) {
-        return DerKind::EcPrivateKeyPkcs8;
-    }
-    // PKCS#1 RSAPrivateKey has no OID at all: all-INTEGER children,
-    // version 0, and a realistically sized modulus.
-    if tags.iter().all(|&t| t == 0x02)
-        && kids.len() >= 2
-        && kids.first().and_then(|k| der_small_int(der, k)) == Some(0)
+    if tags.len() >= 9
+        && tags[..9].iter().all(|&t| t == 0x02)
+        && der_small_int(der, &kids[0]) == Some(0)
         && kids[1].2 >= 64
     {
         return DerKind::RsaPrivateKeyPkcs1;
     }
-    // SEC1 ECPrivateKey: version 1 plus a NIST named-curve OID.
-    if kids.first().and_then(|k| der_small_int(der, k)) == Some(1)
-        && OID_NAMED_CURVES.iter().any(|o| has(o))
+    if tags.len() >= 2
+        && tags[..2] == [0x02, 0x04]
+        && der_small_int(der, &kids[0]) == Some(1)
+        && kids.iter().filter(|k| k.0 == 0xa0).any(|k| {
+            let value = &der[k.1..k.1 + k.2];
+            OID_NAMED_CURVES.contains(&value)
+        })
     {
         return DerKind::EcPrivateKeySec1;
     }
@@ -514,12 +540,45 @@ fn classify_der(der: &[u8]) -> DerKind {
 
 /// Human-readable name of the first recognized signature-algorithm OID.
 fn sig_alg_name(der: &[u8]) -> &'static str {
-    for (oid, name) in SIG_NAMES {
-        if der.windows(oid.len()).any(|w| w == *oid) {
-            return name;
-        }
+    let Some(kids) = der_children(der) else {
+        return "unknown signature algorithm";
+    };
+    let Some(kid) = kids.get(1).filter(|k| k.0 == 0x30) else {
+        return "unknown signature algorithm";
+    };
+    let Some((tag, off, len)) = der_tlv(der, kid.1) else {
+        return "unknown signature algorithm";
+    };
+    if tag != 0x06 || off + len > kid.1 + kid.2 {
+        return "unknown signature algorithm";
     }
-    "unknown signature algorithm"
+    SIG_NAMES
+        .iter()
+        .find(|(oid, _)| der[kid.1..off + len] == **oid)
+        .map_or("unknown signature algorithm", |(_, name)| *name)
+}
+
+fn integer_bits(value: &[u8]) -> Option<u32> {
+    let start = value.iter().position(|b| *b != 0)?;
+    let value = &value[start..];
+    Some((value.len() as u32 * 8) - value[0].leading_zeros())
+}
+
+fn rsa_key_bits(der: &[u8]) -> Option<u32> {
+    let kids = der_children(der)?;
+    match classify_der(der) {
+        DerKind::RsaPrivateKeyPkcs1 => integer_bits(&der[kids[1].1..kids[1].1 + kids[1].2]),
+        DerKind::RsaPrivateKeyPkcs8 => {
+            let key = kids.get(2)?;
+            let inner = &der[key.1..key.1 + key.2];
+            if classify_der(inner) != DerKind::RsaPrivateKeyPkcs1 {
+                return None;
+            }
+            let inner_kids = der_children(inner)?;
+            integer_bits(&inner[inner_kids[1].1..inner_kids[1].1 + inner_kids[1].2])
+        }
+        _ => None,
+    }
 }
 
 /// Scan for a raw DER blob: the content must start with the SEQUENCE tag
@@ -546,14 +605,14 @@ fn scan_der(path: &Path, content: &[u8]) -> Vec<Finding> {
         DerKind::RsaCert => (
             "SNOOT020",
             format!(
-                "X.509 certificate (DER): {}, RSA public key",
+                "X.509 certificate (DER) signed with {}",
                 sig_alg_name(content)
             ),
         ),
         DerKind::EcdsaCert => (
             "SNOOT021",
             format!(
-                "X.509 certificate (DER): {}, EC public key",
+                "X.509 certificate (DER) signed with {}",
                 sig_alg_name(content)
             ),
         ),
@@ -567,16 +626,24 @@ fn scan_der(path: &Path, content: &[u8]) -> Vec<Finding> {
         DerKind::Unknown => return Vec::new(),
     };
     let rule = RuleRegistry::by_id(rule_id).expect("secrets rule ids are static");
-    vec![Finding::new(
+    let mut finding = Finding::new(
         &rule,
-        path.to_string_lossy(),
+        path.to_string_lossy().replace('\\', "/"),
         None,
         Some(format!("<DER blob, {} bytes>", content.len())),
         Evidence {
             kind: "der_blob".to_string(),
             detail,
         },
-    )]
+    );
+    finding.fingerprint = Finding::material_fingerprint(&rule.id, &finding.location.path, content);
+    if let Some(bits) = rsa_key_bits(content) {
+        finding
+            .evidence
+            .detail
+            .push_str(&format!("; {bits}-bit RSA"));
+    }
+    vec![finding]
 }
 
 // ---------------------------------------------------------------------------
@@ -614,16 +681,38 @@ fn scan_jwk(path: &Path, content: &[u8]) -> Vec<Finding> {
     for (idx, obj) in objects.iter().enumerate() {
         if let Some((rule_id, detail)) = jwk_key_finding(obj, idx) {
             if let Some(rule) = RuleRegistry::by_id(rule_id) {
-                findings.push(Finding::new(
+                let mut finding = Finding::new(
                     &rule,
-                    path.to_string_lossy(),
+                    path.to_string_lossy().replace('\\', "/"),
                     None,
                     None,
                     Evidence {
                         kind: "jwk".to_string(),
                         detail,
                     },
-                ));
+                );
+                // Key order is stable in serde_json's map. Reordering a JWKS must not change key identity.
+                let material = serde_json::to_vec(obj).expect("JSON objects serialize");
+                finding.fingerprint =
+                    Finding::material_fingerprint(&rule.id, &finding.location.path, &material);
+                if obj.get("kty").and_then(|v| v.as_str()) == Some("RSA") {
+                    if let Some(bits) = obj
+                        .get("n")
+                        .and_then(|v| v.as_str())
+                        .and_then(|n| {
+                            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                                .decode(n)
+                                .ok()
+                        })
+                        .and_then(|n| integer_bits(&n))
+                    {
+                        finding
+                            .evidence
+                            .detail
+                            .push_str(&format!("; {bits}-bit RSA"));
+                    }
+                }
+                findings.push(finding);
             }
         }
     }
@@ -751,18 +840,15 @@ mod tests {
 
     #[test]
     fn pkcs8_sniff_distinguishes_rsa_and_ec() {
-        // Minimal DER: SEQUENCE wrapping the algorithm OID.
-        let rsa_der = [
-            0x30, 0x0B, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01,
-        ];
-        let ec_der = [
-            0x30, 0x09, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01,
-        ];
-        let other_der = [0x30, 0x03, 0x06, 0x01, 0x2A]; // some other OID
-        let b64 = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
-        assert_eq!(pkcs8_rule_id(&b64(&rsa_der)), Some("SNOOT003"));
-        assert_eq!(pkcs8_rule_id(&b64(&ec_der)), Some("SNOOT009"));
-        assert_eq!(pkcs8_rule_id(&b64(&other_der)), None);
+        let wrap = |oid: &[u8]| {
+            let mut body = tlv(0x02, &[0]);
+            body.extend(seq(oid));
+            body.extend(tlv(0x04, &[1, 2, 3]));
+            base64::engine::general_purpose::STANDARD.encode(seq(&body))
+        };
+        assert_eq!(pkcs8_rule_id(&wrap(OID_RSA_ENCRYPTION)), Some("SNOOT003"));
+        assert_eq!(pkcs8_rule_id(&wrap(OID_EC_PUBLIC_KEY)), Some("SNOOT009"));
+        assert_eq!(pkcs8_rule_id(&wrap(OID_ED25519)), None);
         assert_eq!(pkcs8_rule_id("!!! not base64 !!!"), None);
     }
 
@@ -794,6 +880,9 @@ mod tests {
         // PKCS#1 has no OID: SEQUENCE of INTEGERs, version 0, big modulus.
         let mut body = tlv(0x02, &[0x00]);
         body.extend(tlv(0x02, &[0x99; 65]));
+        for _ in 0..7 {
+            body.extend(tlv(0x02, &[1]));
+        }
         let der = seq(&body);
         assert_eq!(classify_der(&der), DerKind::RsaPrivateKeyPkcs1);
         let findings = scan_der_bytes("key.der", &der);

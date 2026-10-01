@@ -5,6 +5,7 @@ use crate::scanner::ScanReport;
 /// Pretty-printed JSON: `{ "version", "findings": [...], "stats": {...} }`.
 pub fn render(report: &ScanReport) -> anyhow::Result<String> {
     let doc = serde_json::json!({
+        "tool": "snoot",
         "version": env!("CARGO_PKG_VERSION"),
         "findings": report.findings,
         "stats": report.stats,
