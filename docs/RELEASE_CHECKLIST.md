@@ -25,7 +25,8 @@ Before merging or tagging a release:
   collection step requires all five archives and verifies their checksums before
   the publisher can create a draft. The publisher is the only job with release
   write permission.
-- Cargo version, exact semantic release tag, and reviewed release notes agree.
+- Cargo version, exact semantic release tag, and reviewed release notes agree. Update the exact action reference in
+  `release-consumer.yml` for every new release.
   Third-party workflow actions are pinned to full commit SHAs.
 - README documents action inputs/outputs, permissions, runner/toolchain
   requirements, runtime support, fork handling, baselines, and detection limits.
@@ -49,11 +50,13 @@ performs the final name and metadata validation in the release editor.
    after every archive passes. Never move an exact published version tag.
 3. Inspect the draft's five archives, five checksum sidecars, `SHA256SUMS`, and
    reviewed release notes.
-4. In GitHub's release editor, select **Publish this Action to the GitHub
+4. Run `release-consumer.yml` manually on main after tagging, and require its
+   Linux/macOS/Windows jobs to pass using the exact remote action tag.
+5. In GitHub's release editor, select **Publish this Action to the GitHub
    Marketplace**. Accept the Marketplace Developer Agreement as the repository
    owner if GitHub requires it. Select **Security** as the primary category and
    **Code quality** as the secondary category. Resolve any metadata errors.
-5. Publish the release after GitHub reports the metadata is valid. Confirm both
+6. Publish the release after GitHub reports the metadata is valid. Confirm both
    the public release and Marketplace listing, then run a consumer workflow using
    the exact public tag. No crates.io publication is required for Marketplace.
 

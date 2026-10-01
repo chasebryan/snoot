@@ -73,13 +73,15 @@ jobs:
           fail-on: medium
           sarif: snoot-gate.sarif
           category: snoot-action-gate
-          upload-sarif: ${{ runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+          upload-sarif: ${{ runner.os == 'Linux' && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
       - name: Check gating and repository paths
         shell: bash
         env:
           OUTCOME: ${{ steps.gate.outcome }}
           SCANNER_EXIT: ${{ steps.gate.outputs.exit-code }}
           FINDINGS: ${{ steps.gate.outputs.finding-count }}
+          UPLOAD_EXPECTED: ${{ runner.os == 'Linux' && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+          SARIF_ID: ${{ steps.gate.outputs.sarif-id }}
         run: |
           python3 - <<'PYTHON'
           import json, os
@@ -87,6 +89,8 @@ jobs:
           assert os.environ['OUTCOME'] == 'failure'
           assert os.environ['SCANNER_EXIT'] == '2'
           assert os.environ['FINDINGS'] == '4'
+          if os.environ['UPLOAD_EXPECTED'] == 'true':
+              assert os.environ['SARIF_ID'], 'Built-in upload must succeed before the gate'
           report = json.loads(Path('snoot-gate.sarif').read_text())
           result = report['runs'][0]['results'][0]
           assert result['locations'][0]['physicalLocation']['artifactLocation']['uri'] == 'tests/fixtures/code/python_positive.py'

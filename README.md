@@ -46,8 +46,8 @@ jobs:
         with:
           path: .
           fail-on: high
-          # Fork PR tokens cannot upload SARIF; scanning and gating still run.
-          upload-sarif: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          # Restricted fork/Dependabot tokens: scan and gate without upload.
+          upload-sarif: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
 ```
 
 SARIF upload is available for public GitHub.com repositories and eligible
@@ -88,6 +88,7 @@ relative to the scan root, so create a baseline using the same `path` and exclus
 | `sarif` | Absolute path to a completed report; empty on scan/input failure |
 | `finding-count` | Unsuppressed finding count, including findings below the gate |
 | `exit-code` | `0` completed below threshold, `2` severity gate, `3` scan error |
+| `sarif-id` | GitHub upload ID; empty when upload is disabled or fails |
 
 The action writes and optionally uploads the report before failing the severity
 gate. Build/input errors fail the action and can leave outputs empty. An upload
