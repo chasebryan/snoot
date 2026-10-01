@@ -65,7 +65,7 @@ Breakdown:
   on *production* code paths is less exercised.
 - **Adversarial inputs untested.** Obfuscated code, dynamically loaded crypto
   libraries, and deliberately mislabeled PEM blocks beyond what the secrets
-  engine handles will slip through. See "Honest limitations" in the README.
+  engine handles will slip through. See "Detection limits" in the README.
 
 ## Regression gate
 

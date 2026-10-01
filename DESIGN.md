@@ -192,12 +192,17 @@ This is the differentiator against the toy scanners. v1 ships with:
 
 ## 11. Distribution
 
-- `cargo install snoot` (crates.io)
-- GitHub Action (`action.yml` in-repo, composite: `cargo install --git` +
-  SARIF upload to code scanning; switches to prebuilt-binary download with
-  the release workflow)
-- Prebuilt binaries via release workflow (linux/mac/windows, x86_64 + aarch64)
-- Homebrew formula once there's traction
+The initial public distribution is v0.1.0, an experimental inventory tool:
+
+- GitHub Action at the exact release tag, compiling its selected checkout with
+  Rust 1.90 and locked dependencies, then optionally uploading repository-relative
+  SARIF before applying the severity gate.
+- Five native CLI archives for Linux x64/ARM64, macOS Intel/Apple Silicon, and
+  Windows x64. Installed archive behavior and SHA-256 checksums are release gates.
+- Source installation via `cargo install --path . --locked` after checking out
+  the release tag. No crates.io publication or Homebrew formula is included.
+- The release workflow creates one complete draft after all five archives pass;
+  GitHub's Marketplace release editor handles final listing validation/publication.
 
 ## 12. v2 roadmap (documented, not built)
 
@@ -223,13 +228,14 @@ This is the differentiator against the toy scanners. v1 ships with:
 - **Week 6**: Docs (README with HNDL story + CNSA 2.0 table + pqc-scan
   comparison), release workflow, crates.io publish, announcement.
 
-**Readiness reassessment, 2026-09-30:** the implementation supports a controlled
-pre-alpha evaluation. The earlier release-ready declaration was premature:
-the committed tree lacked binary fixtures and CI workflows, and baselines,
-error handling, and report schemas required repair. The integrated revision
-restores those assets and adds regression gates. Unmeasured recall, limited
-production-code validation, and untested release distribution remain production
-release gates. See `docs/RELEASE_CHECKLIST.md` for the evidence and next steps.
+**Readiness reassessment, 2026-09-30:** the integrated revision restores missing
+fixtures/workflows and repairs baselines, error handling, and report schemas.
+The v0.1.0 release process validates all five native archives and the composite
+contract on Linux, macOS, and Windows. These checks support publishing an
+explicitly experimental inventory tool. Unmeasured recall and limited production
+validation still prevent completeness or quantum-safety claims. See
+`docs/RELEASE_CHECKLIST.md` for release evidence and remaining detection work.
+The six-week milestones above are the original plan, not shipped guarantees.
 
 ## 14. Open questions
 
