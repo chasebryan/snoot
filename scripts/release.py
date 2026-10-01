@@ -3,7 +3,6 @@
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -33,7 +32,21 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def check_notices():
+    import tomllib
+    lock = tomllib.loads(Path("Cargo.lock").read_text())
+    notices = Path("THIRD_PARTY_NOTICES.txt").read_text(encoding="utf-8")
+    for package in lock["package"]:
+        if package.get("source", "").startswith("registry+"):
+            marker = f"DEPENDENCY: {package['name']} {package['version']}\n"
+            if marker not in notices:
+                raise ValueError(f"third-party notices need updating: {marker.strip()}")
+    if "RUST RUNTIME: 1.90.0" not in notices:
+        raise ValueError("pinned Rust runtime notices are missing")
+
+
 def package(target, binary):
+    check_notices()
     directory = Path("dist")
     directory.mkdir(exist_ok=True)
     stem = f"snoot-v{version()}-{target}"
@@ -41,7 +54,7 @@ def package(target, binary):
     stage.mkdir(exist_ok=True)
     executable = "snoot.exe" if target.endswith("msvc") else "snoot"
     shutil.copy2(binary, stage / executable)
-    for file in ("README.md", "LICENSE"):
+    for file in ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.txt"):
         shutil.copy2(file, stage / file)
     archive = directory / asset_name(target)
     if TARGETS[target] == "zip":
@@ -77,7 +90,7 @@ def smoke(directory, target):
     archive = directory / asset_name(target)
     stem = f"snoot-v{version()}-{target}"
     executable = "snoot.exe" if target.endswith("msvc") else "snoot"
-    expected = {f"{stem}/{name}" for name in (executable, "README.md", "LICENSE")}
+    expected = {f"{stem}/{name}" for name in (executable, "README.md", "LICENSE", "THIRD_PARTY_NOTICES.txt")}
     with tempfile.TemporaryDirectory(prefix="snoot-release-") as temporary:
         destination = Path(temporary)
         if TARGETS[target] == "zip":

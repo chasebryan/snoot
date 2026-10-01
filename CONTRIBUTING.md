@@ -65,3 +65,7 @@ Review `docs/RELEASE_CHECKLIST.md` before publishing. Release notes live in
 `docs/releases/vVERSION.md`; Cargo version and the exact tag must agree.
 All dependency and release changes pass the same CI. Report vulnerabilities
 privately using SECURITY.md rather than a public reproduction issue.
+
+Dependency updates must refresh THIRD_PARTY_NOTICES.txt from upstream notices.
+The collection script documents regeneration, and release packaging verifies
+that the notice entries match Cargo.lock.

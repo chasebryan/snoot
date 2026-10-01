@@ -246,4 +246,7 @@ Only the development schema validator downloads schemas. Snoot scans offline.
 
 ## License
 
+Binary archives include [third-party notices](THIRD_PARTY_NOTICES.txt) for locked
+dependencies and the pinned Rust runtime.
+
 GNU AGPLv3 — see LICENSE (in the [snoot repo](https://github.com/chasebryan/snoot)).

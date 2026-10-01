@@ -21,7 +21,7 @@ Before merging or tagging a release:
 - Five native optimized archives are built, checksummed, extracted, and executed
   on their corresponding architectures. The installed CLI's version, positive
   finding gate, baseline suppression, and missing-input error are verified.
-- Archive contents are limited to the executable, README, and license. A final
+- Archive contents are limited to the executable, README, license, and upstream dependency/runtime notices. A final
   collection step requires all five archives and verifies their checksums before
   the publisher can create a draft. The publisher is the only job with release
   write permission.
