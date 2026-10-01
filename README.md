@@ -1,5 +1,3 @@
-![snoot](assets/banner.png)
-
 # snoot
 
 *Snoot out the crypto hiding in your codebase.*
