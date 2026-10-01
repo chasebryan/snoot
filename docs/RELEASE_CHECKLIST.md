@@ -1,93 +1,90 @@
-# Snoot readiness and release checklist
+# Snoot release readiness
 
-Assessment date: 2026-09-30. **Suitable for a controlled pre-alpha evaluation;
-not ready to certify inventory completeness or claim production readiness.**
+The first public release is **v0.1.0: experimental cryptography inventory**.
+The GitHub Action is intended for reviewed inventory findings and severity gates.
+It does not certify completeness, compliance, or quantum safety. Marketplace
+availability and detection assurance are separate claims.
 
-The review integrates the newer 22-rule implementation on main with the
-reliability work in PRs #1 and #2. Main's newer rule IDs and detectors are
-preserved. The older branches are included in the integration history.
+## Release acceptance
 
-## Repaired before merge
+Before merging or tagging a release:
 
-- Missing RSA/EC DER fixtures and CI workflows are restored and committed.
-- Missing/unreadable scan inputs, bad baselines, malformed structured manifests,
-  and output failures return errors instead of successful clean reports.
-- Reads are bounded before allocation; supported binary DER continues to reach
-  the secrets engine. Child symlinks and build/dependency trees are skipped.
-- Baselines use version 2, root-relative identities, full call arguments, and
-  complete private material before redaction. They survive line shifts, moved
-  checkouts, and reordered JWKS. Identical calls share suppression identity.
-- Distinct call locations are retained, including multiple calls on one line.
-- C++ inherits applicable C queries; MTS/CTS/TSX work; common Python RSA and
-  NodeRSA constructors are restored without replacing newer constrained queries.
-- TLS exclusions and inline comments no longer enable weak ciphers or hybrid
-  groups. Hybrid tokens must occur in group-related directives.
-- Cargo dependency aliases, target sections, compact Maven entries, and Gradle
-  comment/non-dependency noise are handled. Unsupported Ruby/PHP manifest names
-  are removed from the dispatch list.
-- DER algorithms are read from AlgorithmIdentifier positions, not arbitrary key
-  bytes. Correct P-384/P-521 OIDs and extracted RSA sizes feed the inventory.
-- Separate reports, escaped SARIF paths, valid CycloneDX asset types/primitives,
-  unique component references, and atomic writes replace invalid or partial output.
-- Report writes protect existing source files and symlink destinations. Baseline
-  replacement requires explicit `--force`.
-- The reusable action builds the selected revision, passes inputs as environment
-  variables, supports exclusions/baselines, and uploads findings even when their
-  severity fails the job. Failed scans do not upload stale reports.
-- README, design status, and rule text remove unsupported safety/readiness claims.
-  Inventory-only severity does not imply that Ed25519 or public keys are quantum-safe.
+- Rust formatting, warnings-as-errors linting, all CLI/fixture regression tests,
+  and repository self-scans pass on Linux, macOS, and Windows.
+- Positive and empty SARIF 2.1.0 and CycloneDX 1.6 reports pass the pinned official
+  schema validators.
+- The composite action is exercised on all three operating systems, including
+  expected severity failure, report outputs, baseline/exclusion suppression,
+  invalid inputs, and repository-relative locations.
+- The built-in SARIF upload is exercised before an expected failed gate on a
+  trusted Linux CI run. Fork CI disables upload without elevating token access.
+- Five native optimized archives are built, checksummed, extracted, and executed
+  on their corresponding architectures. The installed CLI's version, positive
+  finding gate, baseline suppression, and missing-input error are verified.
+- Archive contents are limited to the executable, README, license, and upstream dependency/runtime notices. A final
+  collection step requires all five archives and verifies their checksums before
+  the publisher can create a draft. The publisher is the only job with release
+  write permission.
+- Cargo version, exact semantic release tag, and reviewed release notes agree. Update the exact action reference in
+  `release-consumer.yml` for every new release.
+  Third-party workflow actions are pinned to full commit SHAs.
+- README documents action inputs/outputs, permissions, runner/toolchain
+  requirements, runtime support, fork handling, baselines, and detection limits.
+- Security reporting, contribution guidance, community conduct, and dependency
+  update configuration are included.
 
-## Verification
+The scanner's correctness suite contains 83 Rust tests. The action adapter adds
+seven integration tests against the actual binary. Hosted CI additionally tests
+composite behavior and every installed release archive. Results must be verified
+on the final release revision; checklist items alone are not evidence of a pass.
 
-Local macOS ARM64 checks:
+## Publishing to GitHub Marketplace
 
-- 83 tests: 56 unit/fixture tests, 20 CLI reliability tests, 7 smoke tests.
-- Formatting and all-target warnings-as-errors lint checks pass.
-- Real positive and empty reports validate against pinned official SARIF 2.1.0
-  and CycloneDX 1.6 schemas.
-- Repository self-scan passes its severity gate with deliberate fixtures excluded.
-- Native optimized build, package verification (including the missing fixtures),
-  and documentation with warnings treated as errors pass.
+The repo is public and has one root `action.yml`, with unique intended name
+**Snoot PQC Scan**, shield branding, and the documented action contract. GitHub
+performs the final name and metadata validation in the release editor.
 
-CI also runs tests/lints/formatting on Linux, macOS, and Windows, plus official
-schema validation and a reusable-action/code-scanning smoke test. Hosted results
-must pass on the integrated revision before merging.
+1. Merge the reviewed change after the complete CI run passes.
+2. Push the exact version tag (initially `v0.1.0`) from that reviewed main commit.
+   `release-draft.yml` reruns all native builds and creates a complete draft only
+   after every archive passes. Never move an exact published version tag.
+3. Inspect the draft's five archives, five checksum sidecars, `SHA256SUMS`, and
+   reviewed release notes.
+4. Run `release-consumer.yml` manually on main after tagging, and require its
+   Linux/macOS/Windows jobs to pass using the exact remote action tag.
+5. In GitHub's release editor, select **Publish this Action to the GitHub
+   Marketplace**. Accept the Marketplace Developer Agreement as the repository
+   owner if GitHub requires it. Select **Security** as the primary category and
+   **Code quality** as the secondary category. Resolve any metadata errors.
+6. Publish the release after GitHub reports the metadata is valid. Confirm both
+   the public release and Marketplace listing, then run a consumer workflow using
+   the exact public tag. No crates.io publication is required for Marketplace.
 
-On this machine the default macOS 27 SDK is incompatible with the installed
-linker; local compilation uses the already installed macOS 15.4 SDK. This is a
-local tooling condition, not a product workaround committed into the build.
+Full release tags are the supported references for the 0.x series. Publish fixes
+as new exact tags. Breaking action input/output, baseline, or fingerprint changes
+must be documented and given a new compatible release line; retain older tags.
+A moving major alias can be introduced when a stable 1.x contract is established.
 
-## Production release gates
+Official requirements:
+[Publishing actions in GitHub Marketplace](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/publish-in-github-marketplace).
 
-1. Measure recall against a labeled corpus of production application code across
-   supported languages. Earlier reported triage of 160 findings is historical
-   precision evidence and was not independently reproduced in this review.
-2. Independently review import/type ambiguity, aliases, indirect calls, malformed
-   material, and parser robustness. Generic names can still misidentify algorithms.
-3. Validate TLS inheritance/includes and mixed virtual hosts or keep file-level
-   inference explicitly limited. Static configuration does not prove negotiation.
-4. Define the supported material contract: encrypted PKCS#8, DSA private keys,
-   PKCS#12, escaped PEM strings, nested JWK objects, and unknown algorithms remain
-   incomplete. Preserve explicit limitations until support is tested.
-5. Exercise the five-target release workflow and inspect/install every archive.
-   Native compilation and three-platform test CI do not validate cross-built
-   release archives. The workflow creates a draft prerelease; no tag is pushed
-   and no package or public release is published by this review.
+## Remaining detection assurance work
 
-## Publishing after those gates
+This work limits the claims made for v0.1.0; it does not prevent publishing a
+clearly scoped experimental inventory tool.
 
-The fixtures and workflows are in Git; the previous web-upload instructions are
-obsolete. Rust 1.90 is pinned. Publishing remains a deliberate maintainer action.
+1. Measure recall against labeled production code across supported languages.
+   Earlier triage of 160 findings is historical precision evidence and was not
+   independently reproduced in the correctness review.
+2. Expand independent review of import/type ambiguity, aliases, indirect calls,
+   parser robustness, and malformed material. Generic names can misidentify uses.
+3. Add TLS includes/inheritance and virtual-host scope, or retain the explicit
+   file-level limitation. Static configuration does not prove negotiation.
+4. Expand supported key formats: encrypted PKCS#8, DSA private keys, PKCS#12,
+   escaped PEM, arbitrary nested JWKs, and unknown algorithms remain incomplete.
+5. Broaden coverage for dynamically loaded libraries, FFI, and transitive
+   dependencies. Unsupported/oversized files remain documented skipped inputs.
 
-```sh
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
-cargo fmt --all --check
-cargo publish --dry-run --locked
-# Authenticate with crates.io, then publish only after the release gates pass.
-cargo publish --locked
-```
-
-Choose and tag the reviewed version to trigger the five-platform draft prerelease.
-Inspect its artifacts and checksums, smoke-test installs, and review release
-notes before publication. Regenerate version-1 baselines after reviewing findings.
+Baseline version 2 is the supported contract. Regenerate older baselines after
+reviewing their findings. Every new query needs a compiling positive example,
+negative fixtures, and a documented coverage contract.

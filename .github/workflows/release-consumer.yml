@@ -1,0 +1,51 @@
+name: Released action consumer
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  consumer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run public version with read-only permissions
+        id: snoot
+        uses: chasebryan/snoot@v0.1.0
+        with:
+          path: tests/fixtures/code/python_positive.py
+          fail-on: ''
+          sarif: consumer.sarif
+          upload-sarif: 'false'
+      - name: Verify version, outputs, and repository paths
+        shell: bash
+        env:
+          SCANNER_EXIT: ${{ steps.snoot.outputs.exit-code }}
+          FINDINGS: ${{ steps.snoot.outputs.finding-count }}
+          REPORT: ${{ steps.snoot.outputs.sarif }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, subprocess
+          from pathlib import Path
+          import re
+          expected = re.search(r'^version = "([^"]+)"', Path('Cargo.toml').read_text(), re.M)[1]
+          assert 'v' + expected == 'v0.1.0', 'Update the consumer action reference for this release'
+          if os.environ['RELEASE_TAG']:
+              assert os.environ['RELEASE_TAG'] == 'v' + expected
+          assert subprocess.check_output(['snoot', '--version'], text=True).strip() == 'snoot ' + expected
+          assert os.environ['SCANNER_EXIT'] == '0'
+          assert os.environ['FINDINGS'] == '4'
+          results = json.loads(Path(os.environ['REPORT']).read_text())['runs'][0]['results']
+          assert len(results) == 4
+          assert all(r['locations'][0]['physicalLocation']['artifactLocation']['uri'] == 'tests/fixtures/code/python_positive.py' for r in results)
+          PYTHON

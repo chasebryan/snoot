@@ -4,11 +4,13 @@ snoot finds the cryptography quantum computers will break — RSA, ECDSA,
 Diffie-Hellman hiding in your code, keys, and configs — and maps each one
 to its NIST post-quantum replacement.
 
-A pre-alpha tool for planning post-quantum migration. Its static inventory
+An experimental inventory tool for planning post-quantum migration. Its static inventory
 helps identify call sites for review; it does not certify a repository safe.
 
-Build from the repository with `cargo install --path . --locked`.
-Publish/install instructions will be updated after the release gates pass.
+The v0.1.0 release includes a GitHub Action and five native CLI archives.
+See the README for verified installation, workflow permissions, and the action
+contract. Publish this announcement only after the public release and
+Marketplace listing are confirmed.
 
 https://github.com/chasebryan/snoot
 
