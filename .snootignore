@@ -1,3 +1,7 @@
 # Intentionally classical crypto samples for the accuracy gate.
 # Scanned explicitly by tests/fixture_corpus.rs; excluded from repo self-scans.
 tests/fixtures/
+
+# Intentionally classical crypto samples for labeled recall measurement.
+# Scanned explicitly by scripts/recall_benchmark.py.
+benchmarks/recall/corpus/
