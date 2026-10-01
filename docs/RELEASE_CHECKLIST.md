@@ -1,91 +1,93 @@
-# snoot release checklist
+# Snoot readiness and release checklist
 
-Manual steps to ship v0.1.0. Nothing here is automated — run each command
-yourself, in order. (The repo's GitHub App lacks Workflows permission, so
-workflow files go up through the web UI.)
+Assessment date: 2026-09-30. **Suitable for a controlled pre-alpha evaluation;
+not ready to certify inventory completeness or claim production readiness.**
 
-## 0. Preconditions (already done in week 6)
+The review integrates the newer 22-rule implementation on main with the
+reliability work in PRs #1 and #2. Main's newer rule IDs and detectors are
+preserved. The older branches are included in the integration history.
 
-- `cargo test`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo fmt --check` green
-- `cargo publish --dry-run` clean, `cargo doc` warning-free
-- `snoot scan . --exclude 'tests/fixtures/**' --fail-on medium` clean
+## Repaired before merge
 
-## 1. Upload files the app couldn't push (GitHub web UI)
+- Missing RSA/EC DER fixtures and CI workflows are restored and committed.
+- Missing/unreadable scan inputs, bad baselines, malformed structured manifests,
+  and output failures return errors instead of successful clean reports.
+- Reads are bounded before allocation; supported binary DER continues to reach
+  the secrets engine. Child symlinks and build/dependency trees are skipped.
+- Baselines use version 2, root-relative identities, full call arguments, and
+  complete private material before redaction. They survive line shifts, moved
+  checkouts, and reordered JWKS. Identical calls share suppression identity.
+- Distinct call locations are retained, including multiple calls on one line.
+- C++ inherits applicable C queries; MTS/CTS/TSX work; common Python RSA and
+  NodeRSA constructors are restored without replacing newer constrained queries.
+- TLS exclusions and inline comments no longer enable weak ciphers or hybrid
+  groups. Hybrid tokens must occur in group-related directives.
+- Cargo dependency aliases, target sections, compact Maven entries, and Gradle
+  comment/non-dependency noise are handled. Unsupported Ruby/PHP manifest names
+  are removed from the dispatch list.
+- DER algorithms are read from AlgorithmIdentifier positions, not arbitrary key
+  bytes. Correct P-384/P-521 OIDs and extracted RSA sizes feed the inventory.
+- Separate reports, escaped SARIF paths, valid CycloneDX asset types/primitives,
+  unique component references, and atomic writes replace invalid or partial output.
+- Report writes protect existing source files and symlink destinations. Baseline
+  replacement requires explicit `--force`.
+- The reusable action builds the selected revision, passes inputs as environment
+  variables, supports exclusions/baselines, and uploads findings even when their
+  severity fails the job. Failed scans do not upload stale reports.
+- README, design status, and rule text remove unsupported safety/readiness claims.
+  Inventory-only severity does not imply that Ed25519 or public keys are quantum-safe.
 
-Repo → Add file → Create new file, one at a time:
+## Verification
 
-- `assets/banner.jpg` — the blue balloon-letter banner (local copy at
-  `~/workspace/snoot/assets/banner.jpg`)
-- `.github/workflows/ci.yml` — local copy at
-  `~/workspace/snoot/.github/workflows/ci.yml`
-- `.github/workflows/release.yml` — local copy at
-  `~/workspace/snoot/.github/workflows/release.yml` (built in week 6)
-- `tests/fixtures/secrets/rsa_key.der` and `tests/fixtures/secrets/ec_key.der`
-  — binary DER fixtures; the API mangles binary uploads, so these go up
-  through the web UI too. Tests fail without them.
+Local macOS ARM64 checks:
 
-Commit each directly to `main`.
+- 83 tests: 56 unit/fixture tests, 20 CLI reliability tests, 7 smoke tests.
+- Formatting and all-target warnings-as-errors lint checks pass.
+- Real positive and empty reports validate against pinned official SARIF 2.1.0
+  and CycloneDX 1.6 schemas.
+- Repository self-scan passes its severity gate with deliberate fixtures excluded.
+- Native optimized build, package verification (including the missing fixtures),
+  and documentation with warnings treated as errors pass.
 
-## 2. Week-6 tree — already pushed
+CI also runs tests/lints/formatting on Linux, macOS, and Windows, plus official
+schema validation and a reusable-action/code-scanning smoke test. Hosted results
+must pass on the integrated revision before merging.
 
-The full tree (weeks 2–6, 22 rules, docs, action) was pushed via the API
-on 2026-09-30. Nothing left to push except the files in §1 above.
+On this machine the default macOS 27 SDK is incompatible with the installed
+linker; local compilation uses the already installed macOS 15.4 SDK. This is a
+local tooling condition, not a product workaround committed into the build.
 
-## 3. Publish to crates.io
+## Production release gates
 
-Get a token at https://crates.io/me (API tokens → New Token, scope:
-publish). Then:
+1. Measure recall against a labeled corpus of production application code across
+   supported languages. Earlier reported triage of 160 findings is historical
+   precision evidence and was not independently reproduced in this review.
+2. Independently review import/type ambiguity, aliases, indirect calls, malformed
+   material, and parser robustness. Generic names can still misidentify algorithms.
+3. Validate TLS inheritance/includes and mixed virtual hosts or keep file-level
+   inference explicitly limited. Static configuration does not prove negotiation.
+4. Define the supported material contract: encrypted PKCS#8, DSA private keys,
+   PKCS#12, escaped PEM strings, nested JWK objects, and unknown algorithms remain
+   incomplete. Preserve explicit limitations until support is tested.
+5. Exercise the five-target release workflow and inspect/install every archive.
+   Native compilation and three-platform test CI do not validate cross-built
+   release archives. The workflow creates a draft prerelease; no tag is pushed
+   and no package or public release is published by this review.
 
-```bash
-cargo login
-# paste the token when prompted
+## Publishing after those gates
 
-cargo publish --dry-run   # sanity check, should already be clean
-cargo publish
+The fixtures and workflows are in Git; the previous web-upload instructions are
+obsolete. Rust 1.90 is pinned. Publishing remains a deliberate maintainer action.
+
+```sh
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+cargo fmt --all --check
+cargo publish --dry-run --locked
+# Authenticate with crates.io, then publish only after the release gates pass.
+cargo publish --locked
 ```
 
-Verify: https://crates.io/crates/snoot and https://docs.rs/snoot
-
-Notes:
-- License is `AGPL-3.0-only` (your choice). crates.io and docs.rs both
-  accept it; some corporate users will filter it out — that's the tradeoff
-  you already decided on.
-- `tests/fixtures/` (including openssl-generated test keys) ships in the
-  crate package. Deliberate: the fixtures are the test suite's ground
-  truth. They're clearly test keys, but if you'd rather slim the package,
-  add `exclude = ["tests/fixtures/"]` to `[package]` in Cargo.toml before
-  publishing.
-
-## 4. Tag and cut the GitHub release
-
-```bash
-git tag -a v0.1.0 -m "snoot v0.1.0 — first release"
-git push origin v0.1.0
-```
-
-Pushing the tag triggers `.github/workflows/release.yml`, which builds
-prebuilt binaries and opens a **draft** release with the archives
-attached:
-
-- `snoot-v0.1.0-x86_64-unknown-linux-gnu.tar.gz`
-- `snoot-v0.1.0-aarch64-unknown-linux-gnu.tar.gz`
-- `snoot-v0.1.0-aarch64-apple-darwin.tar.gz`
-- `snoot-v0.1.0-x86_64-apple-darwin.tar.gz`
-- `snoot-v0.1.0-x86_64-pc-windows-msvc.zip`
-
-Then: GitHub → Releases → open the draft, sanity-check the archive list,
-write release notes (or keep the generated ones), and hit Publish.
-
-## 5. Smoke-test the install
-
-```bash
-cargo install snoot --locked
-snoot --version
-snoot scan --help
-```
-
-## 6. Announce (optional)
-
-Draft in `docs/ANNOUNCEMENT_DRAFT.md`. Post wherever you want — it's
-yours, not wired to anything.
+Choose and tag the reviewed version to trigger the five-platform draft prerelease.
+Inspect its artifacts and checksums, smoke-test installs, and review release
+notes before publication. Regenerate version-1 baselines after reviewing findings.

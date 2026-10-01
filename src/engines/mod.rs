@@ -42,8 +42,12 @@ pub trait Engine {
         false
     }
 
+    /// Validate structured inputs before interpreting an empty result as a completed scan.
+    fn validate(&self, _path: &Path, _content: &[u8]) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Scan one file's bytes; return zero or more findings.
-    /// `path` is the full path as walked; engines should relativize it
-    /// themselves if they need display paths.
+    /// `path` is relative to the canonical scan root with its native separators.
     fn scan(&self, path: &Path, content: &[u8]) -> Vec<Finding>;
 }

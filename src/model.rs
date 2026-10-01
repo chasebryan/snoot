@@ -153,6 +153,22 @@ impl Finding {
         }
     }
 
+    /// Hash complete key material before redaction; never store it in reports or baselines.
+    pub fn material_fingerprint(rule_id: &str, path: &str, material: &[u8]) -> String {
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for byte in rule_id
+            .bytes()
+            .chain([0])
+            .chain(path.bytes())
+            .chain([0])
+            .chain(material.iter().copied())
+        {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        format!("{hash:016x}")
+    }
+
     /// Deterministic 64-bit FNV-1a hex. No extra dependencies, stable across runs.
     // Week-1 API surface: used by baseline suppression starting week 4.
     #[allow(dead_code)]

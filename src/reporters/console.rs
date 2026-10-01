@@ -31,7 +31,7 @@ pub fn render(report: &ScanReport, color: bool, quiet: bool) -> String {
 
     if report.findings.is_empty() {
         if !quiet {
-            out.push_str("No classical public-key crypto found. Clean snoot.\n");
+            out.push_str("No new findings from the supported detectors.\n");
         }
     } else {
         for finding in &report.findings {
@@ -74,8 +74,11 @@ fn summary_line(report: &ScanReport) -> String {
     let n = report.findings.len();
     if n == 0 {
         return format!(
-            "0 findings · {} files scanned in {}ms\n",
-            report.stats.files_scanned, report.stats.elapsed_ms
+            "0 findings · {} suppressed · {} files scanned · {} skipped · {}ms\n",
+            report.stats.findings_suppressed,
+            report.stats.files_scanned,
+            report.stats.files_skipped,
+            report.stats.elapsed_ms
         );
     }
     let mut parts = Vec::new();
@@ -92,19 +95,24 @@ fn summary_line(report: &ScanReport) -> String {
         }
     }
     format!(
-        "{} finding{} ({}) · {} files scanned in {}ms\n",
+        "{} finding{} ({}) · {} suppressed · {} files scanned · {} skipped · {}ms\n",
         n,
         if n == 1 { "" } else { "s" },
         parts.join(", "),
+        report.stats.findings_suppressed,
         report.stats.files_scanned,
+        report.stats.files_skipped,
         report.stats.elapsed_ms
     )
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    if s.chars().count() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
+        format!(
+            "{}…",
+            s.chars().take(max.saturating_sub(1)).collect::<String>()
+        )
     }
 }

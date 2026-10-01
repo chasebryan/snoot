@@ -26,8 +26,21 @@ fn level(sev: Severity) -> &'static str {
     }
 }
 
+fn uri_path(path: &str) -> String {
+    let mut encoded = String::new();
+    for byte in path.replace('\\', "/").bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            encoded.push(byte as char);
+        } else {
+            use std::fmt::Write;
+            write!(&mut encoded, "%{byte:02X}").expect("writing a string");
+        }
+    }
+    encoded
+}
+
 /// Render the report as a SARIF 2.1.0 JSON document (returned as a string).
-pub fn render(report: &ScanReport) -> String {
+pub fn render(report: &ScanReport) -> anyhow::Result<String> {
     let registry = RuleRegistry::all();
     let rule_index: HashMap<&str, usize> = registry
         .iter()
@@ -53,7 +66,7 @@ pub fn render(report: &ScanReport) -> String {
         .iter()
         .map(|f| {
             let mut physical_location = json!({
-                "artifactLocation": { "uri": f.location.path },
+                "artifactLocation": { "uri": uri_path(&f.location.path) },
             });
             // Always emit a region: whole-file findings (DER blobs, JWK)
             // have no line number, so they point at line 1.
@@ -70,7 +83,7 @@ pub fn render(report: &ScanReport) -> String {
                 "level": level(f.severity),
                 "message": { "text": format!("{} — {}", f.title, f.remediation) },
                 "locations": [{ "physicalLocation": physical_location }],
-                "fingerprints": { "snoot/v1": f.fingerprint },
+                "partialFingerprints": { "snoot/v1": f.fingerprint },
             });
             if let Some(idx) = rule_index.get(f.rule_id.as_str()) {
                 result["ruleIndex"] = json!(idx);
@@ -99,7 +112,7 @@ pub fn render(report: &ScanReport) -> String {
         }],
     });
 
-    serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_string())
+    Ok(serde_json::to_string_pretty(&doc)?)
 }
 
 #[cfg(test)]
@@ -154,7 +167,7 @@ mod tests {
     /// not a vendored copy of the full JSON schema.
     #[test]
     fn sarif_output_conforms() {
-        let doc: Value = serde_json::from_str(&render(&report())).unwrap();
+        let doc: Value = serde_json::from_str(&render(&report()).unwrap()).unwrap();
 
         assert_eq!(doc["version"], "2.1.0");
         assert!(
@@ -209,7 +222,7 @@ mod tests {
             if let Some(region) = phys.get("region") {
                 assert!(region["startLine"].as_u64().unwrap() >= 1);
             }
-            assert!(!result["fingerprints"]["snoot/v1"]
+            assert!(!result["partialFingerprints"]["snoot/v1"]
                 .as_str()
                 .unwrap()
                 .is_empty());
@@ -232,7 +245,7 @@ mod tests {
             stats: ScanStats::default(),
             root: PathBuf::from("."),
         };
-        let doc: Value = serde_json::from_str(&render(&empty)).unwrap();
+        let doc: Value = serde_json::from_str(&render(&empty).unwrap()).unwrap();
         assert_eq!(doc["version"], "2.1.0");
         assert_eq!(doc["runs"][0]["results"].as_array().unwrap().len(), 0);
         assert!(!doc["runs"][0]["tool"]["driver"]["rules"]

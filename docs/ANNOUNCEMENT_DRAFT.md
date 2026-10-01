@@ -4,10 +4,11 @@ snoot finds the cryptography quantum computers will break — RSA, ECDSA,
 Diffie-Hellman hiding in your code, keys, and configs — and maps each one
 to its NIST post-quantum replacement.
 
-Harvest now, decrypt later is already happening. CNSA 2.0 says migrate by
-2031. snoot shows you where to start.
+A pre-alpha tool for planning post-quantum migration. Its static inventory
+helps identify call sites for review; it does not certify a repository safe.
 
-`cargo install snoot`
+Build from the repository with `cargo install --path . --locked`.
+Publish/install instructions will be updated after the release gates pass.
 
 https://github.com/chasebryan/snoot
 

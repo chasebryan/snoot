@@ -73,43 +73,23 @@ The `tests/fixtures/` corpus (22+ files, exact rule-ID set pinned per file in
 `src/fixture_corpus.rs`) runs on every `cargo test`. Any query change that
 alters fixture behavior fails loudly. New rules must ship fixtures.
 
-## How snoot compares
+## Current regression coverage
 
-Other open-source PQC scanners exist, all single-author and all young
-(checked September 2026). This is a factual comparison, not a ranking —
-different tools make different tradeoffs.
+The integrated revision retains the exact per-file rule sets and every-query
+positive checks, and adds CLI tests for baseline portability, changed private
+material, JWKS reordering, repeated call locations, full argument fingerprints,
+DER dispatch, C++/TSX/MTS/CTS, TLS exclusions/comments, structured manifests,
+output preservation, severity thresholds, and separate reports.
 
-- **[pqctl](https://github.com/rjcuff/pqctl)** — the closest in spirit.
-  Scans key files (PEM PKCS#1/PKCS#8, OpenSSH), X.509 certs/CSRs, source
-  code (Go, Python, Java, JS/Node, C/OpenSSL, Ruby, PHP, C#), and TLS
-  configs; `--json`, `--min-severity`, `--fail-on`, `--exclude`. Also
-  *generates* PQC keys (`keygen`), which snoot deliberately doesn't do.
-  Its README carries the same honest disclaimer we do ("heuristic
-  inventory tool, not a certifier").
-- **[pqc-scan](https://github.com/sachhg/pqc-scan)** — "Snyk for PQC"
-  positioning, tree-sitter AST detection like ours, PQC001-style rule IDs.
-- **[pqcanalyzer](https://github.com/xuxu298/pqcanalyzer)** (MIT) — the
-  broadest scope: *active* TLS 1.3 ClientHello probing for X25519MLKEM768,
-  PCAP flow analysis with HNDL scoring, VPN config scanning, PQC
-  benchmarking via liboqs, and migration roadmaps with cost estimates.
-  256 tests. Has a paid enterprise tier.
+Pinned official SARIF 2.1.0 and CycloneDX 1.6 schemas validate real fixture
+reports and empty reports in CI. Schema validity establishes interchange shape,
+not inventory completeness or regulatory compliance.
 
-Where snoot differs, concretely:
+The historical 160-finding exercise above was documented by earlier work.
+This readiness review did not reproduce its manual labels. Its per-rule counts
+are not current output expectations: duplicate-location retention, new queries,
+path-based test severity, and manifest coverage have changed.
 
-1. **Static only, by design.** snoot never touches the network.
-   pqcanalyzer's active probing answers "what's deployed"; snoot answers
-   "what's in the repo." Different questions.
-2. **Accuracy transparency.** The fixture corpus (exact rule-ID set pinned
-   per file) and this document's published validation — 160 findings
-   across three real repos, zero false positives, with an explicit section
-   on what the validation does *not* prove — are the differentiator we
-   chose to invest in. We publish our misses policy, not just our hits.
-3. **Compliance-shaped outputs.** SARIF 2.1.0 (lands as GitHub PR
-   annotations) and CycloneDX CBOM (the artifact auditors actually ask
-   for), plus baseline suppression for CI.
-4. **The orange hook.** Findings point at what orange can verify or
-   replace. None of the above has that pipeline.
-
-What snoot does *not* do that others do: live host probing, PQC key
-generation, benchmarking, cost roadmaps. If you need those, use those
-tools — they're good at their jobs.
+Known limits include import/type ambiguity, aliases and indirect calls, file-level
+TLS hybrid decisions across virtual hosts, unsupported encrypted/DSA material,
+and unmeasured recall. No claim of universal zero false positives is warranted.

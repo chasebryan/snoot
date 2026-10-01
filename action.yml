@@ -1,61 +1,72 @@
-# snoot GitHub Action — scan for classical public-key crypto, upload SARIF.
-#
-# Usage:
-#   - uses: chasebryan/snoot@main
-#     with:
-#       path: ./myapp
-#       fail-on: high
-#
-# Installs via `cargo install --git` (prebuilt binaries land with the week-6
-# release workflow; then this switches to a download). Requires a Rust
-# toolchain on the runner — github-hosted ubuntu-latest ships one, or add
-# dtolnay/rust-toolchain@stable before this step.
-
-name: "snoot PQC scan"
-description: "Scan for classical public-key cryptography (RSA/ECDSA/DH) and upload SARIF to code scanning"
-author: "Chase Bryan"
-
+name: snoot PQC scan
+description: Scan for classical public-key cryptography and optionally upload SARIF
+author: Chase Bryan
 branding:
-  icon: "shield"
-  color: "blue"
-
+  icon: shield
+  color: blue
 inputs:
   path:
-    description: "Path to scan, relative to the repository root"
-    required: false
-    default: "."
+    description: Path to scan, relative to the repository root
+    default: '.'
   fail-on:
-    description: "Minimum finding severity that fails the run (critical|high|medium|low|info)"
-    required: false
-    default: "high"
+    description: Minimum finding severity that fails the run; empty disables gating
+    default: high
   exclude:
-    description: "Comma-separated glob patterns to skip, relative to the scan root (e.g. 'tests/fixtures/**')"
-    required: false
-    default: ""
+    description: Comma-separated root-relative glob patterns to skip
+    default: ''
+  baseline:
+    description: Optional baseline file for accepted findings
+    default: ''
+  sarif:
+    description: SARIF output file
+    default: snoot.sarif
   upload-sarif:
-    description: "Upload SARIF results to GitHub code scanning"
-    required: false
-    default: "true"
-
+    description: Upload results to GitHub code scanning
+    default: 'true'
 runs:
-  using: "composite"
+  using: composite
   steps:
-    - name: Install snoot
+    - name: Install pinned Rust toolchain
       shell: bash
-      run: cargo install --git https://github.com/chasebryan/snoot --locked
-
-    - name: Scan for classical crypto
+      run: rustup toolchain install 1.90.0 --profile minimal
+    - name: Build this version of snoot
       shell: bash
+      env:
+        SNOOT_ACTION_PATH: ${{ github.action_path }}
       run: |
-        ARGS=("--format" "sarif" "--output" "snoot.sarif" "--fail-on" "${{ inputs.fail-on }}")
-        if [ -n "${{ inputs.exclude }}" ]; then
-          ARGS+=("--exclude" "${{ inputs.exclude }}")
+        set -euo pipefail
+        install_root=$(mktemp -d "$RUNNER_TEMP/snoot.XXXXXX")
+        cargo +1.90.0 install --path "$SNOOT_ACTION_PATH" --locked --root "$install_root"
+        echo "$install_root/bin" >> "$GITHUB_PATH"
+    - name: Scan for classical crypto
+      id: scan
+      shell: bash
+      env:
+        SNOOT_SCAN_PATH: ${{ inputs.path }}
+        SNOOT_SARIF: ${{ inputs.sarif }}
+        SNOOT_FAIL_ON: ${{ inputs.fail-on }}
+        SNOOT_BASELINE: ${{ inputs.baseline }}
+        SNOOT_EXCLUDE: ${{ inputs.exclude }}
+      run: |
+        set -euo pipefail
+        case "$SNOOT_FAIL_ON" in
+          ''|info|low|medium|high|critical) ;;
+          *) echo 'Invalid fail-on severity' >&2; exit 3 ;;
+        esac
+        args=(scan --format=sarif "--output=$SNOOT_SARIF")
+        if [[ -n "$SNOOT_FAIL_ON" ]]; then args+=("--fail-on=$SNOOT_FAIL_ON"); fi
+        if [[ -n "$SNOOT_BASELINE" ]]; then args+=("--baseline=$SNOOT_BASELINE"); fi
+        if [[ -n "$SNOOT_EXCLUDE" ]]; then args+=("--exclude=$SNOOT_EXCLUDE"); fi
+        args+=(-- "$SNOOT_SCAN_PATH")
+        status=0
+        snoot "${args[@]}" || status=$?
+        if [[ "$status" == 0 || "$status" == 2 ]]; then
+          echo 'report-written=true' >> "$GITHUB_OUTPUT"
         fi
-        snoot scan "${{ inputs.path }}" "${ARGS[@]}"
-
+        exit "$status"
     - name: Upload SARIF to code scanning
-      if: ${{ inputs.upload-sarif == 'true' }}
-      uses: github/codeql-action/upload-sarif@v3
+      if: ${{ always() && inputs.upload-sarif == 'true' && steps.scan.outputs.report-written == 'true' }}
+      uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
       with:
-        sarif_file: snoot.sarif
+        sarif_file: ${{ inputs.sarif }}
         category: snoot

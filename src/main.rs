@@ -1,23 +1,20 @@
-//! snoot — snoot out the crypto hiding in your codebase.
-//!
-//! A developer-native scanner for classical public-key cryptography usage:
-//! finds RSA / ECDSA / ECDH / DSA / DH in source, key material, manifests and
-//! TLS configs, and emits machine-readable evidence (SARIF, CycloneDX CBOM,
-//! JSON) for PQC migration planning.
+//! snoot — discover classical cryptography and report migration evidence.
 
 mod baseline;
 mod engines;
 #[cfg(test)]
 mod fixture_corpus;
+mod ignore;
 mod model;
 mod reporters;
 mod rules;
 mod scanner;
 
-use std::io::Write as _;
-use std::path::PathBuf;
+use std::io::{IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use anyhow::{ensure, Context};
 use clap::{Args, Parser, Subcommand};
 
 use model::{OutputFormat, Severity};
@@ -26,11 +23,7 @@ use model::{OutputFormat, Severity};
 #[command(
     name = "snoot",
     version,
-    about = "Snoot out the crypto hiding in your codebase.",
-    long_about = "snoot scans a source tree for classical public-key cryptography \
-                  (RSA, ECDSA/ECDH, DSA, DH), reports what is quantum-vulnerable, \
-                  and emits machine-readable evidence (SARIF, CycloneDX CBOM, JSON) \
-                  for post-quantum migration planning."
+    about = "Snoot out the crypto hiding in your codebase."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -41,170 +34,256 @@ struct Cli {
 enum Commands {
     /// Scan a source tree for classical public-key crypto usage
     Scan(ScanArgs),
-    /// Write a baseline file from current findings (suppresses them on later scans)
+    /// Record current findings for suppression on later scans
     Init(InitArgs),
-    /// List all detection rules with IDs and descriptions
+    /// List detection rules; see README for coverage
     Rules,
 }
 
 #[derive(Debug, Args)]
 struct ScanArgs {
-    /// Path to scan (default: current directory)
     #[arg(default_value = ".")]
     path: PathBuf,
-
-    /// Output format; repeatable, e.g. --format sarif --format json (default: console)
+    /// Output format; repeat for multiple reports (requires --output directory)
     #[arg(long, value_enum, value_name = "FORMAT")]
     format: Vec<OutputFormat>,
-
-    /// Write the report to FILE instead of stdout
-    #[arg(long, value_name = "FILE")]
+    /// Output file for one format, or output directory for multiple formats
+    #[arg(long, value_name = "PATH")]
     output: Option<PathBuf>,
-
-    /// Exit non-zero if any finding is at or above SEVERITY (CI gating)
+    /// Exit 2 if an unsuppressed finding is at or above SEVERITY
     #[arg(long, value_enum, value_name = "SEVERITY")]
     fail_on: Option<Severity>,
-
-    /// Suppress findings already recorded in baseline FILE
+    /// Suppress findings recorded in baseline FILE
     #[arg(long, value_name = "FILE")]
     baseline: Option<PathBuf>,
-
-    /// Skip files matching a glob (relative to the scan root, e.g.
-    /// 'tests/fixtures/**'). Repeatable and comma-separated.
-    #[arg(long, value_name = "GLOB", value_delimiter = ',')]
-    exclude: Vec<String>,
-
-    /// Disable colored output
     #[arg(long)]
     no_color: bool,
-
-    /// Findings only: no banner or summary
+    /// Skip files or directories matching a root-relative glob
+    #[arg(long, value_name = "GLOB", value_delimiter = ',')]
+    exclude: Vec<String>,
+    /// Findings only: no console banner or summary
     #[arg(long)]
     quiet: bool,
 }
 
 #[derive(Debug, Args)]
 struct InitArgs {
-    /// Path to scan (default: current directory)
     #[arg(default_value = ".")]
     path: PathBuf,
-
-    /// Where to write the baseline file
     #[arg(long, default_value = ".snoot-baseline.json", value_name = "FILE")]
     output: PathBuf,
-
-    /// Skip files matching a glob (relative to the scan root).
-    /// Repeatable and comma-separated.
+    /// Replace an existing baseline
+    #[arg(long)]
+    force: bool,
+    /// Skip files or directories matching a root-relative glob
     #[arg(long, value_name = "GLOB", value_delimiter = ',')]
     exclude: Vec<String>,
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-    match cli.command {
+    let result = match Cli::parse().command {
         Commands::Scan(args) => cmd_scan(args),
         Commands::Init(args) => cmd_init(args),
         Commands::Rules => cmd_rules(),
-    }
-}
-
-fn cmd_scan(args: ScanArgs) -> ExitCode {
-    let formats = if args.format.is_empty() {
-        vec![OutputFormat::Console]
-    } else {
-        args.format.clone()
     };
-
-    let opts = scanner::ScanOptions {
-        root: args.path.clone(),
-        baseline: args.baseline.clone(),
-        exclude: args.exclude.clone(),
-        ..Default::default()
-    };
-    let report = match scanner::scan(&opts) {
-        Ok(report) => report,
+    match result {
+        Ok(code) => code,
         Err(err) => {
-            eprintln!("snoot: scan failed: {err:#}");
-            return ExitCode::from(3);
-        }
-    };
-
-    let mut chunks = Vec::with_capacity(formats.len());
-    for fmt in &formats {
-        let rendered = match fmt {
-            OutputFormat::Console => {
-                reporters::console::render(&report, !args.no_color, args.quiet)
-            }
-            OutputFormat::Json => reporters::json::render(&report)
-                .unwrap_or_else(|err| format!("{{\"error\":\"{err}\"}}")),
-            OutputFormat::Sarif => reporters::sarif::render(&report),
-            OutputFormat::Cbom => reporters::cbom::render(&report),
-        };
-        chunks.push(rendered);
-    }
-    let out = chunks.join("\n");
-
-    if let Some(path) = args.output.as_deref() {
-        if let Err(err) = std::fs::write(path, &out) {
-            eprintln!("snoot: cannot write {}: {err:#}", path.display());
-            return ExitCode::from(3);
-        }
-    } else {
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        let _ = writeln!(handle, "{out}");
-    }
-
-    if let Some(min) = args.fail_on {
-        if report.findings.iter().any(|f| f.severity.at_least(min)) {
-            if !args.quiet {
-                eprintln!(
-                    "snoot: findings at or above severity '{min}' — failing (--fail-on {min})"
-                );
-            }
-            return ExitCode::from(2);
-        }
-    }
-
-    ExitCode::SUCCESS
-}
-
-fn cmd_init(args: InitArgs) -> ExitCode {
-    let opts = scanner::ScanOptions {
-        root: args.path.clone(),
-        exclude: args.exclude.clone(),
-        ..Default::default()
-    };
-    let report = match scanner::scan(&opts) {
-        Ok(report) => report,
-        Err(err) => {
-            eprintln!("snoot: scan failed: {err:#}");
-            return ExitCode::from(3);
-        }
-    };
-    let count = report.findings.len();
-    match baseline::Baseline::write(&args.output, &report.findings) {
-        Ok(()) => {
-            println!(
-                "snoot: wrote baseline with {count} finding{} to {}",
-                if count == 1 { "" } else { "s" },
-                args.output.display()
-            );
-            ExitCode::SUCCESS
-        }
-        Err(err) => {
-            eprintln!("snoot: cannot write baseline: {err:#}");
+            eprintln!("snoot: {err:#}");
             ExitCode::from(3)
         }
     }
 }
 
-fn cmd_rules() -> ExitCode {
-    for rule in rules::RuleRegistry::all() {
-        println!("{}  [{}]  {}", rule.id, rule.severity, rule.title);
-        println!("    {}", rule.description);
-        println!("    -> {}", rule.remediation);
-        println!();
+fn output_name(format: OutputFormat) -> &'static str {
+    match format {
+        OutputFormat::Console => "snoot.txt",
+        OutputFormat::Json => "snoot.json",
+        OutputFormat::Sarif => "snoot.sarif",
+        OutputFormat::Cbom => "snoot.cdx.json",
     }
-    ExitCode::SUCCESS
+}
+
+/// Do not overwrite the scan input or a baseline while writing a report.
+fn check_output(path: &Path, source: &Path, baseline: Option<&Path>) -> anyhow::Result<()> {
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        ensure!(
+            !metadata.file_type().is_symlink(),
+            "output {} is a symlink",
+            path.display()
+        );
+    }
+    if let Ok(output) = path.canonicalize() {
+        if let Ok(root) = source.canonicalize() {
+            if root.is_dir() && output.starts_with(&root) && output.is_file() {
+                // Existing source files must not be hidden by output exclusions and overwritten.
+                let data = std::fs::read(&output).context("checking existing output")?;
+                let generated = serde_json::from_slice::<serde_json::Value>(&data)
+                    .ok()
+                    .is_some_and(|doc| {
+                        (doc["tool"] == "snoot" && doc["findings"].is_array())
+                            || (doc["version"] == "2.1.0"
+                                && doc["runs"][0]["tool"]["driver"]["name"] == "snoot")
+                            || (doc["bomFormat"] == "CycloneDX"
+                                && doc["metadata"]["tools"]["components"][0]["name"] == "snoot")
+                            || (doc["version"].is_number() && doc["fingerprints"].is_array())
+                    })
+                    || std::str::from_utf8(&data).is_ok_and(|text| {
+                        text.contains("snoot v") && text.contains("files scanned")
+                    });
+                ensure!(
+                    generated,
+                    "output {} would overwrite a scan source file",
+                    path.display()
+                );
+            }
+        }
+        ensure!(
+            source.canonicalize().ok().as_ref() != Some(&output),
+            "output {} is also the scan input",
+            path.display()
+        );
+        if let Some(baseline) = baseline {
+            ensure!(
+                baseline.canonicalize().ok().as_ref() != Some(&output),
+                "output {} is also the baseline",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn write_report(path: &Path, out: &str) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut file = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("creating report in {}", parent.display()))?;
+    file.write_all(out.as_bytes())?;
+    file.as_file().sync_all()?;
+    file.persist(path)
+        .with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
+}
+
+fn cmd_scan(args: ScanArgs) -> anyhow::Result<ExitCode> {
+    let mut formats = args.format;
+    if formats.is_empty() {
+        formats.push(OutputFormat::Console);
+    }
+    let mut unique = Vec::new();
+    for format in formats {
+        if !unique.contains(&format) {
+            unique.push(format);
+        }
+    }
+    let multiple = unique.len() > 1;
+    ensure!(
+        !multiple || args.output.is_some(),
+        "multiple formats require --output DIRECTORY; each report is written separately"
+    );
+    if multiple {
+        let directory = args.output.as_ref().unwrap();
+        ensure!(
+            !directory.exists() || directory.is_dir(),
+            "multiple formats require an output directory: {}",
+            directory.display()
+        );
+    }
+    let outputs: Vec<Option<PathBuf>> = unique
+        .iter()
+        .map(|format| {
+            args.output.as_ref().map(|path| {
+                if multiple {
+                    path.join(output_name(*format))
+                } else {
+                    path.clone()
+                }
+            })
+        })
+        .collect();
+    for path in outputs.iter().flatten() {
+        check_output(path, &args.path, args.baseline.as_deref())?;
+    }
+    let report = scanner::scan(&scanner::ScanOptions {
+        root: args.path,
+        exclude: args.exclude,
+        baseline: args.baseline,
+        excluded_paths: outputs.iter().flatten().cloned().collect(),
+        ..Default::default()
+    })?;
+    let color = !args.no_color
+        && args.output.is_none()
+        && std::env::var_os("NO_COLOR").is_none()
+        && std::io::stdout().is_terminal();
+    let rendered: Vec<String> = unique
+        .iter()
+        .map(|format| match format {
+            OutputFormat::Console => Ok(reporters::console::render(&report, color, args.quiet)),
+            OutputFormat::Json => reporters::json::render(&report),
+            OutputFormat::Sarif => reporters::sarif::render(&report),
+            OutputFormat::Cbom => reporters::cbom::render(&report),
+        })
+        .collect::<anyhow::Result<_>>()?;
+    if multiple {
+        let directory = args.output.as_ref().unwrap();
+        std::fs::create_dir_all(directory)
+            .with_context(|| format!("creating report directory {}", directory.display()))?;
+    }
+    for (out, path) in rendered.iter().zip(outputs) {
+        if let Some(path) = path {
+            write_report(&path, out)?;
+        } else {
+            writeln!(std::io::stdout().lock(), "{out}").context("writing report to stdout")?;
+        }
+    }
+    if let Some(minimum) = args.fail_on {
+        if report
+            .findings
+            .iter()
+            .any(|finding| finding.severity.at_least(minimum))
+        {
+            if !args.quiet {
+                eprintln!("snoot: findings at or above '{minimum}' (--fail-on {minimum})");
+            }
+            return Ok(ExitCode::from(2));
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_init(args: InitArgs) -> anyhow::Result<ExitCode> {
+    check_output(&args.output, &args.path, None)?;
+    ensure!(
+        args.force || !args.output.exists(),
+        "baseline {} already exists; use --force to replace it",
+        args.output.display()
+    );
+    let report = scanner::scan(&scanner::ScanOptions {
+        root: args.path,
+        exclude: args.exclude,
+        excluded_paths: vec![args.output.clone()],
+        ..Default::default()
+    })?;
+    baseline::Baseline::write(&args.output, &report.findings, args.force)?;
+    eprintln!(
+        "snoot: recorded {} findings in {}",
+        report.findings.len(),
+        args.output.display()
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_rules() -> anyhow::Result<ExitCode> {
+    let mut out = std::io::stdout().lock();
+    for rule in rules::RuleRegistry::all() {
+        writeln!(
+            out,
+            "{}  [{}]  {}\n    {}\n    -> {}\n",
+            rule.id, rule.severity, rule.title, rule.description, rule.remediation
+        )?;
+    }
+    Ok(ExitCode::SUCCESS)
 }
