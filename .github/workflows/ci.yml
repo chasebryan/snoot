@@ -32,6 +32,12 @@ jobs:
           binary="target/debug/snoot"
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
           python3 scripts/action/test_run.py "$binary"
+      - name: Labeled recall benchmark seed
+        shell: bash
+        run: |
+          binary="target/debug/snoot"
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          python3 scripts/recall_benchmark.py "$binary"
       - name: Scan snoot (fixtures are excluded by .snootignore)
         run: cargo run --locked -- scan . --fail-on high --format json --format sarif --format cbom --output target/snoot-reports
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
