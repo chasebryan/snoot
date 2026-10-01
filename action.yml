@@ -1,72 +1,97 @@
-name: snoot PQC scan
-description: Scan for classical public-key cryptography and optionally upload SARIF
+name: Snoot PQC Scan
+description: Inventory classical cryptography, gate new findings, and upload SARIF to GitHub code scanning
 author: Chase Bryan
 branding:
   icon: shield
   color: blue
 inputs:
   path:
-    description: Path to scan, relative to the repository root
+    description: File or directory to scan, relative to the repository workspace
     default: '.'
   fail-on:
-    description: Minimum finding severity that fails the run; empty disables gating
+    description: Minimum severity that fails the action (info, low, medium, high, critical); empty disables gating
     default: high
   exclude:
-    description: Comma-separated root-relative glob patterns to skip
+    description: Comma-separated globs relative to the scan root
     default: ''
   baseline:
-    description: Optional baseline file for accepted findings
+    description: Version-2 baseline file, relative to the repository workspace
     default: ''
   sarif:
-    description: SARIF output file
+    description: SARIF output file, relative to the repository workspace
     default: snoot.sarif
   upload-sarif:
-    description: Upload results to GitHub code scanning
+    description: Upload to GitHub code scanning (true or false); requires security-events write and code-scanning access
     default: 'true'
+  category:
+    description: Unique code-scanning category; use different values for multiple scans of one commit
+    default: snoot
+outputs:
+  sarif:
+    description: Absolute path to the completed SARIF report; empty if scanning fails
+    value: ${{ steps.scan.outputs.sarif }}
+  finding-count:
+    description: Number of unsuppressed findings in the completed report
+    value: ${{ steps.scan.outputs.finding-count }}
+  exit-code:
+    description: Scanner exit code (0 completed below threshold, 2 severity gate, 3 scan or input error)
+    value: ${{ steps.scan.outputs.exit-code }}
 runs:
   using: composite
   steps:
-    - name: Install pinned Rust toolchain
+    - name: Validate inputs and runner
       shell: bash
-      run: rustup toolchain install 1.90.0 --profile minimal
-    - name: Build this version of snoot
+      env:
+        SNOOT_ACTION_PATH: ${{ github.action_path }}
+        SNOOT_SCAN_PATH: ${{ inputs.path }}
+        SNOOT_SARIF: ${{ inputs.sarif }}
+        SNOOT_FAIL_ON: ${{ inputs.fail-on }}
+        SNOOT_BASELINE: ${{ inputs.baseline }}
+        SNOOT_UPLOAD: ${{ inputs.upload-sarif }}
+        SNOOT_CATEGORY: ${{ inputs.category }}
+      run: |
+        set -euo pipefail
+        command -v rustup >/dev/null || { echo 'Snoot requires rustup on this runner.' >&2; exit 3; }
+        command -v python3 >/dev/null || { echo 'Snoot requires Python 3.9+ on this runner.' >&2; exit 3; }
+        python3 "$SNOOT_ACTION_PATH/scripts/action/run.py" --validate
+    - name: Build selected Snoot revision
+      id: install
       shell: bash
       env:
         SNOOT_ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
+        rustup toolchain install 1.90.0 --profile minimal
         install_root=$(mktemp -d "$RUNNER_TEMP/snoot.XXXXXX")
-        cargo +1.90.0 install --path "$SNOOT_ACTION_PATH" --locked --root "$install_root"
+        cargo +1.90.0 install --path "$SNOOT_ACTION_PATH" --locked --root "$install_root" --target-dir "$RUNNER_TEMP/snoot-action-build"
+        binary="$install_root/bin/snoot"
+        if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+        echo "binary=$binary" >> "$GITHUB_OUTPUT"
         echo "$install_root/bin" >> "$GITHUB_PATH"
-    - name: Scan for classical crypto
+    - name: Scan and prepare repository-relative SARIF
       id: scan
       shell: bash
       env:
+        SNOOT_ACTION_PATH: ${{ github.action_path }}
+        SNOOT_BINARY: ${{ steps.install.outputs.binary }}
         SNOOT_SCAN_PATH: ${{ inputs.path }}
         SNOOT_SARIF: ${{ inputs.sarif }}
         SNOOT_FAIL_ON: ${{ inputs.fail-on }}
         SNOOT_BASELINE: ${{ inputs.baseline }}
         SNOOT_EXCLUDE: ${{ inputs.exclude }}
-      run: |
-        set -euo pipefail
-        case "$SNOOT_FAIL_ON" in
-          ''|info|low|medium|high|critical) ;;
-          *) echo 'Invalid fail-on severity' >&2; exit 3 ;;
-        esac
-        args=(scan --format=sarif "--output=$SNOOT_SARIF")
-        if [[ -n "$SNOOT_FAIL_ON" ]]; then args+=("--fail-on=$SNOOT_FAIL_ON"); fi
-        if [[ -n "$SNOOT_BASELINE" ]]; then args+=("--baseline=$SNOOT_BASELINE"); fi
-        if [[ -n "$SNOOT_EXCLUDE" ]]; then args+=("--exclude=$SNOOT_EXCLUDE"); fi
-        args+=(-- "$SNOOT_SCAN_PATH")
-        status=0
-        snoot "${args[@]}" || status=$?
-        if [[ "$status" == 0 || "$status" == 2 ]]; then
-          echo 'report-written=true' >> "$GITHUB_OUTPUT"
-        fi
-        exit "$status"
+        SNOOT_UPLOAD: ${{ inputs.upload-sarif }}
+        SNOOT_CATEGORY: ${{ inputs.category }}
+      run: python3 "$SNOOT_ACTION_PATH/scripts/action/run.py"
     - name: Upload SARIF to code scanning
-      if: ${{ always() && inputs.upload-sarif == 'true' && steps.scan.outputs.report-written == 'true' }}
+      if: ${{ always() && !cancelled() && inputs.upload-sarif == 'true' && steps.scan.outputs.sarif != '' }}
       uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
       with:
-        sarif_file: ${{ inputs.sarif }}
-        category: snoot
+        sarif_file: ${{ steps.scan.outputs.sarif }}
+        category: ${{ inputs.category }}
+        checkout_path: ${{ github.workspace }}
+    - name: Enforce severity gate
+      if: ${{ always() && !cancelled() && steps.scan.outputs.exit-code == '2' }}
+      shell: bash
+      run: |
+        echo 'Snoot found unsuppressed findings at or above the requested severity.' >&2
+        exit 2

@@ -1,0 +1,39 @@
+name: Prepare Marketplace release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketplace-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  archives:
+    uses: ./.github/workflows/release.yml
+
+  draft:
+    needs: archives
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-complete
+          path: dist
+      - name: Prepare complete release for Marketplace publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/release.py check-version --tag "$RELEASE_TAG"
+          python3 scripts/release.py verify
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --draft \
+            --title "Snoot $RELEASE_TAG — cryptography inventory" \
+            --notes-file "docs/releases/$RELEASE_TAG.md"

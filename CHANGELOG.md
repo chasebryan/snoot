@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (pre-alpha)
+## 0.1.0 — first public release
 
 First public scaffold → working scanner:
 
@@ -22,4 +22,15 @@ Reliability integration:
 - C++ and modern TypeScript coverage, common RSA/NodeRSA calls, manifest aliases,
   and corrected TLS exclusions/comment handling
 - Restored three-platform CI and DER fixtures; revision-specific reusable action
-- Draft prerelease archives with SHA-256 checksums; production release gates documented
+
+Marketplace release preparation:
+
+- Complete action input/output and runner contracts, code-scanning permissions,
+  baseline, fork, artifact, and monorepo workflow examples
+- Repository-relative SARIF locations for subdirectory and file scans
+- Literal input validation, gate-after-upload behavior, and action integration tests
+- Five native packaged binaries with installed archive smoke tests and SHA-256 checksums
+- All archives must pass before a single complete release draft is created
+- Pinned workflow integrations, dependency update configuration, private security
+  reporting guidance, conduct policy, and reproducible bug report form
+- Detection limits and experimental status retained without completeness claims

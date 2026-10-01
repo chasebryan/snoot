@@ -1,0 +1,27 @@
+name: Bug or detection error
+description: Report a scan failure, false positive, or missing detection
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic examples. Report vulnerabilities privately through the Security tab; do not attach real secrets or confidential code.
+  - type: input
+    id: version
+    attributes:
+      label: Snoot version and runner
+      description: Action tag or commit, CLI version, operating system, and architecture
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Small synthetic input and the exact command or workflow inputs
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include the rule ID, error, or report location when applicable
+    validations:
+      required: true

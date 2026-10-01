@@ -1,12 +1,15 @@
-name: release
+name: Release archives
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -14,73 +17,70 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
-          - os: ubuntu-latest
+          - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
-            archive: tar.gz
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
-            archive: tar.gz
-          - os: macos-latest
+          - os: macos-15
             target: aarch64-apple-darwin
-            archive: tar.gz
-          - os: windows-latest
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
-            archive: zip
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install pinned toolchain and target
-        run: rustup toolchain install 1.90.0 --profile minimal --target ${{ matrix.target }}
-      - name: Install cross (linux aarch64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: cargo install cross --version 0.2.5 --locked
-      - name: Build
-        shell: bash
-        run: |
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            cross build --locked --release --target "${{ matrix.target }}"
-          else
-            cargo build --locked --release --target "${{ matrix.target }}"
-          fi
-      - name: Package
-        shell: bash
-        run: |
-          bin="snoot"
-          ext=""
-          if [[ "${{ matrix.os }}" == windows-latest ]]; then
-            ext=".exe"
-          fi
-          stage="snoot-${{ github.ref_name }}-${{ matrix.target }}"
-          mkdir -p "$stage"
-          cp "target/${{ matrix.target }}/release/${bin}${ext}" "$stage/"
-          cp README.md LICENSE "$stage/"
-          if [[ "${{ matrix.archive }}" == zip ]]; then
-            7z a "${stage}.zip" "$stage"
-            echo "ASSET=${stage}.zip" >> "$GITHUB_ENV"
-          else
-            tar -czf "${stage}.tar.gz" "$stage"
-            echo "ASSET=${stage}.tar.gz" >> "$GITHUB_ENV"
-          fi
-      - name: Checksum archive
-        shell: bash
-        run: |
-          python - <<'PYTHON'
-          import hashlib, os
-          from pathlib import Path
-          artifact = Path(os.environ["ASSET"])
-          artifact.with_name(artifact.name + ".sha256").write_text(
-              hashlib.sha256(artifact.read_bytes()).hexdigest() + "  " + artifact.name + "\n"
-          )
-          PYTHON
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          files: |
-            ${{ env.ASSET }}
-            ${{ env.ASSET }}.sha256
-          generate_release_notes: true
-          draft: true
-          prerelease: true
-          fail_on_unmatched_files: true
+          python-version: '3.12'
+      - name: Verify release tag and notes
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python scripts/release.py check-version --tag "$RELEASE_TAG"
+        shell: bash
+      - name: Install pinned toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal --target ${{ matrix.target }}
+      - name: Build native optimized binary
+        run: cargo +1.90.0 build --locked --release --target ${{ matrix.target }}
+      - name: Package and verify installed archive
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          binary="target/$RELEASE_TARGET/release/snoot"
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          python scripts/release.py package --target "$RELEASE_TARGET" --binary "$binary"
+          python scripts/release.py smoke --target "$RELEASE_TARGET"
+          python scripts/action/test_run.py "$binary"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  verify:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Require all five complete archives
+        run: python3 scripts/release.py verify
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-complete
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

@@ -26,6 +26,12 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests and fixture corpus
         run: cargo test --locked
+      - name: Action adapter contracts
+        shell: bash
+        run: |
+          binary="target/debug/snoot"
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          python3 scripts/action/test_run.py "$binary"
       - name: Scan snoot (fixtures are excluded by .snootignore)
         run: cargo run --locked -- scan . --fail-on high --format json --format sarif --format cbom --output target/snoot-reports
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -43,32 +49,89 @@ jobs:
           path: target/snoot-reports/
           if-no-files-found: error
 
+  release-candidate:
+    uses: ./.github/workflows/release.yml
+
   action-smoke:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
+      actions: read
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Run the reusable action
+      - name: Gate findings after the built-in upload
+        id: gate
+        continue-on-error: true
         uses: ./
         with:
-          path: tests/fixtures/code/js_negative.js
-          fail-on: high
-          sarif: snoot-action.sarif
-          upload-sarif: 'false'
-      - name: Check that the action wrote one SARIF document
+          path: tests/fixtures/code/python_positive.py
+          fail-on: medium
+          sarif: snoot-gate.sarif
+          category: snoot-action-gate
+          upload-sarif: ${{ runner.os == 'Linux' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      - name: Check gating and repository paths
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+          SCANNER_EXIT: ${{ steps.gate.outputs.exit-code }}
+          FINDINGS: ${{ steps.gate.outputs.finding-count }}
         run: |
           python3 - <<'PYTHON'
-          import json
+          import json, os
           from pathlib import Path
-          report = json.loads(Path("snoot-action.sarif").read_text())
-          assert report["version"] == "2.1.0"
-          assert report["runs"][0]["results"] == []
+          assert os.environ['OUTCOME'] == 'failure'
+          assert os.environ['SCANNER_EXIT'] == '2'
+          assert os.environ['FINDINGS'] == '4'
+          report = json.loads(Path('snoot-gate.sarif').read_text())
+          result = report['runs'][0]['results'][0]
+          assert result['locations'][0]['physicalLocation']['artifactLocation']['uri'] == 'tests/fixtures/code/python_positive.py'
           PYTHON
-      - name: Upload the action report to code scanning
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+          snoot init tests/fixtures/code/python_positive.py --output snoot-action-baseline.json
+      - name: Baseline suppresses the gate
+        id: baseline
+        uses: ./
         with:
-          sarif_file: snoot-action.sarif
-          category: snoot-action-smoke
+          path: tests/fixtures/code/python_positive.py
+          baseline: snoot-action-baseline.json
+          sarif: snoot-baseline.sarif
+          upload-sarif: 'false'
+      - name: Exclusion suppresses the gate
+        id: exclude
+        uses: ./
+        with:
+          path: tests/fixtures/code/python_positive.py
+          exclude: '*.py'
+          sarif: snoot-exclude.sarif
+          upload-sarif: 'false'
+      - name: Invalid input cannot upload stale SARIF
+        id: invalid
+        continue-on-error: true
+        uses: ./
+        with:
+          path: missing-snoot-scan-path
+          sarif: snoot-gate.sarif
+          upload-sarif: 'true'
+      - name: Verify completed and failed action outputs
+        shell: bash
+        env:
+          BASELINE_EXIT: ${{ steps.baseline.outputs.exit-code }}
+          BASELINE_COUNT: ${{ steps.baseline.outputs.finding-count }}
+          EXCLUDE_EXIT: ${{ steps.exclude.outputs.exit-code }}
+          EXCLUDE_COUNT: ${{ steps.exclude.outputs.finding-count }}
+          INVALID_OUTCOME: ${{ steps.invalid.outcome }}
+          INVALID_REPORT: ${{ steps.invalid.outputs.sarif }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          assert os.environ['BASELINE_EXIT'] == '0'
+          assert os.environ['BASELINE_COUNT'] == '0'
+          assert os.environ['EXCLUDE_EXIT'] == '0'
+          assert os.environ['EXCLUDE_COUNT'] == '0'
+          assert os.environ['INVALID_OUTCOME'] == 'failure'
+          assert os.environ['INVALID_REPORT'] == ''
+          PYTHON
