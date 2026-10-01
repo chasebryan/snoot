@@ -93,3 +93,16 @@ path-based test severity, and manifest coverage have changed.
 Known limits include import/type ambiguity, aliases and indirect calls, file-level
 TLS hybrid decisions across virtual hosts, unsupported encrypted/DSA material,
 and unmeasured recall. No claim of universal zero false positives is warranted.
+
+## Labeled recall benchmark
+
+A separate recall harness now lives in
+[`benchmarks/recall/`](../benchmarks/recall/manifest.json) and is documented in
+[`docs/recall-benchmark.md`](recall-benchmark.md). It measures labeled
+cryptographic sites detected / total labeled sites and surfaces unmatched
+scanner findings for review.
+
+The committed seed corpus is synthetic and exists to regression-test the
+measurement machinery. It is **not** a production recall estimate. A defensible
+recall claim still requires independently labeled, production-like ground truth
+across supported languages, engines, and documented blind spots.
