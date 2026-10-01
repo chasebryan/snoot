@@ -52,7 +52,7 @@ def package(target, binary):
         with tarfile.open(archive, "w:gz") as output:
             output.add(stage, arcname=stem)
     archive.with_name(archive.name + ".sha256").write_text(
-        f"{digest(archive)}  {archive.name}\n", encoding="utf-8"
+        f"{digest(archive)}  {archive.name}\n", encoding="utf-8", newline="\n"
     )
     print(archive)
 
@@ -63,8 +63,8 @@ def verify(directory, target=None):
     for item in targets:
         archive = directory / asset_name(item)
         actual = f"{digest(archive)}  {archive.name}\n"
-        expected = archive.with_name(archive.name + ".sha256").read_text(encoding="utf-8")
-        if expected != actual:
+        expected = archive.with_name(archive.name + ".sha256").read_bytes()
+        if expected != actual.encode("utf-8"):
             raise ValueError(f"checksum mismatch: {archive}")
         lines.append(actual)
     if target is None:
