@@ -213,13 +213,6 @@ python scripts/validate_reports.py target/debug/snoot
 
 Only the development schema validator downloads schemas. Snoot scans offline.
 
-## Pipeline
-
-**snoot discovers → [orange](https://github.com/chasebryan/orange) verifies →
-[orange-school](https://github.com/chasebryan/orange-school) teaches.**
-Findings for primitives orange supports carry an `orange_note` pointing at
-what orange can verify or replace.
-
 ## Detection limits
 
 - Heuristic detection; no data-flow analysis — a flagged call site means
