@@ -33,6 +33,7 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
           python3 scripts/action/test_run.py "$binary"
       - name: Recall regression benchmark
+        id: recall
         shell: bash
         run: |
           binary="target/debug/snoot"
@@ -50,6 +51,7 @@ jobs:
           python -m pip install jsonschema==4.23.0
           python scripts/validate_reports.py target/debug/snoot
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() && steps.recall.outcome != 'skipped' }}
         with:
           name: snoot-reports-${{ runner.os }}
           path: target/snoot-reports/
