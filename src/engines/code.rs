@@ -194,7 +194,7 @@ impl Engine for CodeEngine {
                 let mut start = usize::MAX;
                 let mut end = 0;
                 let mut start_row = 0u32;
-                for cap in m.captures {
+                for cap in m.captures() {
                     let node = cap.node;
                     if node.start_byte() < start {
                         start = node.start_byte();
@@ -206,7 +206,7 @@ impl Engine for CodeEngine {
                     continue;
                 }
                 // Include arguments in the fingerprint, even when queries only capture the callee.
-                let mut node = m.captures[0].node;
+                let mut node = m.captures()[0].node;
                 while let Some(parent) = node.parent() {
                     if matches!(
                         parent.kind(),
