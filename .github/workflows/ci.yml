@@ -32,6 +32,13 @@ jobs:
           binary="target/debug/snoot"
           if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
           python3 scripts/action/test_run.py "$binary"
+      - name: Recall regression benchmark
+        id: recall
+        shell: bash
+        run: |
+          binary="target/debug/snoot"
+          if [[ "$RUNNER_OS" == Windows ]]; then binary="$binary.exe"; fi
+          python3 scripts/benchmark_recall.py "$binary" --json-output target/snoot-reports/recall-benchmark.json
       - name: Scan snoot (fixtures are excluded by .snootignore)
         run: cargo run --locked -- scan . --fail-on high --format json --format sarif --format cbom --output target/snoot-reports
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -44,6 +51,7 @@ jobs:
           python -m pip install jsonschema==4.23.0
           python scripts/validate_reports.py target/debug/snoot
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() && steps.recall.outcome != 'skipped' }}
         with:
           name: snoot-reports-${{ runner.os }}
           path: target/snoot-reports/
