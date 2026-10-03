@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "name": "snoot-synthetic-recall-v1",
+  "description": "Labeled regression corpus for detection coverage. These synthetic and generated fixtures are not representative production prevalence and do not establish production recall.",
+  "root": "tests/fixtures",
+  "minimums": {
+    "precision": 1.0,
+    "recall": 1.0
+  },
+  "cases": [
+    {"path": "code/rust_positive.rs", "expected_rules": ["SNOOT001", "SNOOT002", "SNOOT013"]},
+    {"path": "code/rust_negative.rs", "expected_rules": []},
+    {"path": "code/python_positive.py", "expected_rules": ["SNOOT001", "SNOOT002", "SNOOT013", "SNOOT014"]},
+    {"path": "code/python_negative.py", "expected_rules": []},
+    {"path": "code/go_positive.go", "expected_rules": ["SNOOT001", "SNOOT013"]},
+    {"path": "code/go_negative.go", "expected_rules": []},
+    {"path": "code/js_positive.js", "expected_rules": ["SNOOT001", "SNOOT014"]},
+    {"path": "code/js_negative.js", "expected_rules": []},
+    {"path": "code/java_positive.java", "expected_rules": ["SNOOT001", "SNOOT002"]},
+    {"path": "code/java_negative.java", "expected_rules": []},
+    {"path": "code/c_positive.c", "expected_rules": ["SNOOT001", "SNOOT002"]},
+    {"path": "code/c_negative.c", "expected_rules": []},
+
+    {"path": "secrets/rsa_private.pem", "expected_rules": ["SNOOT003"]},
+    {"path": "secrets/ec_private.pem", "expected_rules": ["SNOOT009"]},
+    {"path": "secrets/pgp_private.asc", "expected_rules": ["SNOOT015"]},
+    {"path": "secrets/clean.txt", "expected_rules": []},
+    {"path": "secrets/rsa_key.der", "expected_rules": ["SNOOT003"]},
+    {"path": "secrets/ec_key.der", "expected_rules": ["SNOOT009"]},
+    {"path": "secrets/rsa_cert.pem", "expected_rules": ["SNOOT020"]},
+    {"path": "secrets/ecdsa_cert.pem", "expected_rules": ["SNOOT021"]},
+    {"path": "secrets/ed25519_cert.pem", "expected_rules": ["SNOOT022"]},
+    {"path": "secrets/jwk_rsa.json", "expected_rules": ["SNOOT003"]},
+    {"path": "secrets/jwk_ec.json", "expected_rules": ["SNOOT022"]},
+
+    {"path": "manifest/Cargo.toml", "expected_rules": ["SNOOT017"]},
+    {"path": "manifest/package.json", "expected_rules": ["SNOOT016"]},
+    {"path": "manifest/requirements.txt", "expected_rules": ["SNOOT017"]},
+    {"path": "manifest/go.mod", "expected_rules": ["SNOOT017"]},
+
+    {"path": "tlsconf/nginx_weak.conf", "expected_rules": ["SNOOT005", "SNOOT018", "SNOOT019"]},
+    {"path": "tlsconf/nginx_good.conf", "expected_rules": []}
+  ]
+}
