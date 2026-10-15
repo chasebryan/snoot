@@ -56,7 +56,7 @@ jobs:
           python scripts/release.py package --target "$RELEASE_TARGET" --binary "$binary"
           python scripts/release.py smoke --target "$RELEASE_TARGET"
           python scripts/action/test_run.py "$binary"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}
           path: |
@@ -78,7 +78,7 @@ jobs:
           merge-multiple: true
       - name: Require all five complete archives
         run: python3 scripts/release.py verify
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-complete
           path: dist/
